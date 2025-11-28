@@ -13,84 +13,58 @@ This repository contains the source code for the Platypus AI system, an AI-power
 
 ## Setup & Running the System
 
-To run the full Platypus system locally, you need to run both the backend service and the VS Code extension.
+The project is configured as a VS Code multi-root workspace to provide a seamless, one-click debugging experience for both the backend and the extension.
 
-### 1. Backend Setup
+### 1. Initial Project Setup
 
-The backend service handles all communication with the AI model.
-
-1.  **Navigate to the backend directory:**
-    ```bash
-    cd backend
-    ```
-
-2.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
-
-3.  **Configure Environment Variables:**
-    -   Copy the example environment file:
+1.  **Install Backend Dependencies:**
+    -   Navigate to the backend directory and install its dependencies.
         ```bash
-        cp .env.example .env
+        cd backend
+        npm install
+        cd ..
         ```
-    -   Open the newly created `.env` file in a text editor.
-    -   Add your Google Gemini API key:
+
+2.  **Install Extension Dependencies:**
+    -   Navigate to the extension and WebUI directories and install their dependencies.
+        ```bash
+        cd extension
+        npm install
+        cd web-ui
+        npm install
+        cd ../..
+        ```
+
+3.  **Configure Backend Environment Variables:**
+    -   In the `backend/` directory, copy the example environment file:
+        ```bash
+        cp backend/.env.example backend/.env
+        ```
+    -   Open the newly created `backend/.env` file and add your Google Gemini API key:
         ```
         API_KEY="YOUR_GEMINI_API_KEY_HERE"
         ```
 
-4.  **Run the backend server:**
-    ```bash
-    npm run dev
-    ```
-
-    The backend server will start, typically on `http://localhost:3001`. Keep this terminal window open.
-
-### 2. VS Code Extension Setup
-
-The extension provides the user interface and interacts with your workspace files.
-
-1.  **Open the extension project in VS Code:**
-    -   Open a new VS Code window.
-    -   Go to `File > Open Folder...` and select the `extension/` directory from this repository.
-
-2.  **Install dependencies:**
-    -   Open the integrated terminal in VS Code (`Ctrl+\`` or `Cmd+\``).
-    -   Install the extension's dependencies:
+4.  **Build the WebUI:**
+    -   Run the build command for the React UI. This compiles the static assets that the extension serves.
         ```bash
-        npm install
-        ```
-    -   Navigate to the WebUI directory and install its dependencies:
-        ```bash
-        cd web-ui
-        npm install
+        npm run build --workspace=extension/web-ui
         ```
 
-3.  **Build the WebUI:**
-    -   While still in the `extension/web-ui` directory, run the build command. This compiles the React app into static assets that the extension can serve.
-        ```bash
-        npm run build
-        ```
-    -   Navigate back to the extension root:
-        ```bash
-        cd ..
-        ```
+### 2. Running the System in VS Code
 
-4.  **Compile the Extension:**
-    -   Compile the extension's TypeScript code:
-        ```bash
-        npm run compile
-        ```
-    -   Or, to watch for changes and recompile automatically:
-        ```bash
-        npm run watch
-        ```
+1.  **Open the Workspace:**
+    -   Open VS Code.
+    -   Go to `File > Open Workspace from File...`
+    -   Select the `platypus.code-workspace` file located in the root of this project.
 
-5.  **Run the Extension in Debug Mode:**
-    -   Press `F5` to open a new "Extension Development Host" window. This new VS Code window will have the Platypus extension installed and activated.
-    -   In the new window, open any of your personal code projects.
-    -   Open the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`) and type `Start Platypus AI Analysis`.
-    -   The Platypus UI will open in a new tab, and you can begin using it to analyze your code.
+2.  **Start Debugging:**
+    -   Press `F5` or go to `Run > Start Debugging`.
+    -   Ensure that the selected launch configuration is **"Launch Backend & Extension"**.
 
-The full end-to-end system is now running.
+This single action will:
+-   Automatically compile the extension's TypeScript code.
+-   Start the backend server in a debug-enabled terminal.
+-   Launch a new "Extension Development Host" window with the Platypus AI extension installed and activated.
+
+The full end-to-end system is now running and ready for debugging. Any changes you make to the backend or extension code will be picked up by their respective hot-reload or watch processes.

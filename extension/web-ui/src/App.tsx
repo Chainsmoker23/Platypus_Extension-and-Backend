@@ -144,7 +144,7 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const isStreaming = isLoading && conversation[conversation.length - 1]?.user && !analysisResult;
+  const isStreaming = !!(isLoading && conversation[conversation.length - 1]?.user && !analysisResult);
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-200">

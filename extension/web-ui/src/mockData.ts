@@ -1,4 +1,5 @@
 
+
 import type { AnalysisResult } from './types';
 
 const appTsDiff = `--- a/src/components/App.tsx
@@ -71,18 +72,16 @@ const buttonTsxDiff = `--- a/src/components/Button.tsx
 +  }
 +);`;
 
-export const MOCK_ANALYSIS_RESULT: Omit<AnalysisResult, 'changes'> & { changes: Omit<AnalysisResult['changes'][0], 'status'>[]} = {
+export const MOCK_ANALYSIS_RESULT = {
   summary: 'I have analyzed your request to refactor the state management in `App.tsx` to use a reducer. This is a good practice for managing more complex state. I have also identified an improvement in your `Button.tsx` component to make it more flexible by forwarding refs and accepting all standard button props. Here are the proposed changes.',
   changes: [
     {
-      // FIX: Added missing 'operation' property to satisfy the discriminated union type.
       operation: 'modify',
       filePath: 'src/components/App.tsx',
       explanation: 'Refactors the component to use `useReducer` for more robust state management, combining `count` and `error` states into a single state object.',
       diff: appTsDiff,
     },
     {
-      // FIX: Added missing 'operation' property to satisfy the discriminated union type.
       operation: 'modify',
       filePath: 'src/components/Button.tsx',
       explanation: 'Enhances the Button component by using `forwardRef` and spreading props, allowing it to accept any standard button attribute for better reusability.',

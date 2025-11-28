@@ -20,7 +20,10 @@ export class DependencyGraphService {
     }
 
     private buildGraph(): void {
-        const importRegex = /import(?:["'\\s]*(?:[\\w*{}\\s,]+)from\\s*)?["'\\s]*([@\\w/\\-.]+?)["'\\s]*;/gm;
+        // FIX: The hyphen in the character class for the import path was moved to the end.
+        // This is a more robust way to specify a literal hyphen and avoids the "Range out of order"
+        // error thrown by some regex engines.
+        const importRegex = /import(?:["'\\s]*(?:[\\w*{}\\s,]+)from\\s*)?["'\\s]*([@\\w/.-]+?)["'\\s]*;/gm;
 
         for (const [filePath, content] of this.files.entries()) {
             let match;
