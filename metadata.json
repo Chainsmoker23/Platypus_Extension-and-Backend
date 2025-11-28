@@ -1,0 +1,5 @@
+{
+  "name": "Platypus AI Dev System",
+  "description": "A web UI for Platypus, an AI-powered development system that integrates with VS Code. This UI allows users to analyze their codebase, review AI-generated code changes, and apply them directly to their project.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,38 @@
+{
+  "name": "platypus-ai",
+  "displayName": "Platypus AI",
+  "description": "AI-powered development system",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:platypus-ai.start"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "platypus-ai.start",
+        "title": "Start Platypus AI Analysis"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "20.x",
+    "typescript": "^5.0.0",
+    "@types/diff": "^5.2.0"
+  },
+  "dependencies": {
+    "diff": "^5.2.0"
+  }
+}
