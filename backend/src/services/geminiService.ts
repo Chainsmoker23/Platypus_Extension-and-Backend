@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { FileData } from '../types';
-import { parsePatch } from 'diff';
+import { validateDiff } from '../utils/diffValidator';
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
@@ -68,24 +68,7 @@ ${fileContents}
         const jsonText = response.text.trim();
         const result = JSON.parse(jsonText);
 
-        // --- Diff Validation Step ---
-        if (result.changes && Array.isArray(result.changes)) {
-            for (const change of result.changes) {
-                if (typeof change.diff !== 'string' || change.diff.trim().length === 0) continue;
-                
-                try {
-                    const parsedDiff = parsePatch(change.diff);
-                    // A valid patch for a single file should result in exactly one parsed patch object.
-                    // An empty diff string is valid and results in an empty array.
-                    if (parsedDiff.length > 1) {
-                         throw new Error(`Malformed diff for ${change.filePath}: contains multiple file patches.`);
-                    }
-                } catch (e) {
-                    console.error(`Invalid diff format for file ${change.filePath}:`, e);
-                    throw new Error(`AI generated an invalid diff format for ${change.filePath}.`);
-                }
-            }
-        }
+        validateDiff(result);
         
         return result;
 

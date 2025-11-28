@@ -3,6 +3,8 @@ export interface FileNode {
   name: string;
   type: 'file' | 'directory';
   children?: FileNode[];
+  path: string;
+  isSelected?: boolean;
 }
 
 export interface CodeChange {

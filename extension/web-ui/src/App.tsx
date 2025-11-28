@@ -5,17 +5,20 @@ import { ChatInterface } from './components/ChatInterface';
 import { ChangeSetViewer } from './components/ChangeSetViewer';
 import { useVscodeMessageHandler } from './hooks/useVscodeMessageHandler';
 import type { FileNode, AnalysisResult, CodeChange, VscodeMessage } from './types';
-import { VscLoading } from './components/icons';
+// FIX: Import PlatypusIcon to resolve 'Cannot find name' error.
+import { VscLoading, PlatypusIcon } from './components/icons';
+import { vscodeApi } from './api/vscode';
 
 const App: React.FC = () => {
   const [fileTree, setFileTree] = useState<FileNode | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [selectedChange, setSelectedChange] = useState<CodeChange | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true); // Start in loading state
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [statusMessage, setStatusMessage] = useState<string>('Initializing Platypus AI...');
   const [conversation, setConversation] = useState<{user: string, ai: string}[]>([]);
+  const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
 
-  const { postMessage } = useVscodeMessageHandler((event: MessageEvent<VscodeMessage>) => {
+  useVscodeMessageHandler((event: MessageEvent<VscodeMessage>) => {
     const message = event.data;
     switch (message.command) {
       case 'load-file-tree':
@@ -48,22 +51,14 @@ const App: React.FC = () => {
         break;
       case 'show-loading':
         const payload = message.payload as string;
-        // Don't overwrite the initial file loading message
-        if (payload !== 'Ready to analyze.' || !fileTree) {
-          setIsLoading(true);
-          setStatusMessage(payload);
-        } else if (payload === 'Ready to analyze.') {
-          setIsLoading(false);
-          setStatusMessage(payload);
-        }
+        setIsLoading(true);
+        setStatusMessage(payload);
         break;
     }
   });
 
   useEffect(() => {
-    // When the webview is ready, it sends a message to the extension host.
-    postMessage({ command: 'webview-ready' });
-     // eslint-disable-next-line react-hooks/exhaustive-deps
+    vscodeApi.postMessage({ command: 'webview-ready' });
   }, []);
 
   const handlePromptSubmit = useCallback(async (prompt: string) => {
@@ -73,8 +68,8 @@ const App: React.FC = () => {
     setSelectedChange(null);
     setConversation(prev => [...prev, {user: prompt, ai: ''}]);
 
-    postMessage({ command: 'analyze-code', payload: { prompt } });
-  }, [postMessage]);
+    vscodeApi.postMessage({ command: 'analyze-code', payload: { prompt, selectedFiles: selectedFilePaths } });
+  }, [selectedFilePaths]);
 
   const handleUpdateChangeStatus = useCallback((filePath: string, status: CodeChange['status']) => {
     setAnalysisResult(prevResult => {
@@ -95,15 +90,13 @@ const App: React.FC = () => {
       return;
     }
     setStatusMessage(`Applying ${acceptedChanges.length} change(s)...`);
-    postMessage({ command: 'apply-changes', payload: acceptedChanges });
+    vscodeApi.postMessage({ command: 'apply-changes', payload: acceptedChanges });
     
-    // The extension will handle success/failure messages.
-    // For now, we clear the UI.
     setIsLoading(false);
     setStatusMessage('Changes sent to VS Code for application.');
     setAnalysisResult(null);
     setSelectedChange(null);
-  }, [postMessage, analysisResult]);
+  }, [analysisResult]);
   
   const handleRejectAll = useCallback(() => {
     setStatusMessage('All proposed changes have been discarded.');
@@ -111,16 +104,30 @@ const App: React.FC = () => {
     setSelectedChange(null);
   }, []);
 
+  const handleFileSelectionChange = useCallback((path: string, selected: boolean) => {
+    setSelectedFilePaths(prev => {
+        if(selected) {
+            return [...prev, path];
+        } else {
+            return prev.filter(p => p !== path);
+        }
+    });
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-200">
       <Header />
       <div className="flex flex-grow overflow-hidden">
         <aside className="w-1/4 min-w-[250px] max-w-[400px] bg-gray-800/50 flex flex-col border-r border-gray-700">
-            <div className="p-4 border-b border-gray-700 flex-shrink-0">
+            <div className="p-4 border-b border-gray-700 flex-shrink-0 flex items-center gap-2">
+                <PlatypusIcon className="h-6 w-6 text-cyan-400" />
                 <h2 className="text-lg font-semibold text-gray-300">Project Files</h2>
             </div>
             <div className="flex-grow p-4 overflow-y-auto">
-                {fileTree ? <FileTree node={fileTree} /> : <div className="text-gray-400">Loading files...</div>}
+                {fileTree ? <FileTree node={fileTree} onSelectionChange={handleFileSelectionChange} selectedPaths={selectedFilePaths} /> : <div className="text-gray-400">Loading files...</div>}
+            </div>
+             <div className="p-2 border-t border-gray-700 text-xs text-gray-500">
+                {selectedFilePaths.length > 0 ? `${selectedFilePaths.length} files selected for context.` : 'No files selected. Full project context will be used.'}
             </div>
         </aside>
         <main className="flex-grow flex flex-col">
