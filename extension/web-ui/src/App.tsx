@@ -1,22 +1,25 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { FileTree } from './components/FileTree';
 import { ChatInterface } from './components/ChatInterface';
 import { ChangeSetViewer } from './components/ChangeSetViewer';
+import { ErrorDisplay } from './components/ErrorDisplay';
 import { useVscodeMessageHandler } from './hooks/useVscodeMessageHandler';
-import type { FileNode, AnalysisResult, CodeChange, VscodeMessage } from './types';
-// FIX: Import PlatypusIcon to resolve 'Cannot find name' error.
-import { VscLoading, PlatypusIcon } from './components/icons';
+import type { FileNode, AnalysisResult, FileSystemOperation, VscodeMessage, ErrorPayload, ChangeStatus } from './types';
+import { VscLoading, PlatypusIcon, VscClose } from './components/icons';
 import { vscodeApi } from './api/vscode';
 
 const App: React.FC = () => {
   const [fileTree, setFileTree] = useState<FileNode | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [selectedChange, setSelectedChange] = useState<CodeChange | null>(null);
+  const [selectedChange, setSelectedChange] = useState<FileSystemOperation | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [statusMessage, setStatusMessage] = useState<string>('Initializing Platypus AI...');
   const [conversation, setConversation] = useState<{user: string, ai: string}[]>([]);
   const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
+  const [error, setError] = useState<ErrorPayload | null>(null);
+
 
   useVscodeMessageHandler((event: MessageEvent<VscodeMessage>) => {
     const message = event.data;
@@ -54,6 +57,11 @@ const App: React.FC = () => {
         setIsLoading(true);
         setStatusMessage(payload);
         break;
+      case 'error':
+        setError(message.payload as ErrorPayload);
+        setIsLoading(false);
+        setStatusMessage('An error occurred. See details above.');
+        break;
     }
   });
 
@@ -66,20 +74,25 @@ const App: React.FC = () => {
     setStatusMessage('Analyzing codebase...');
     setAnalysisResult(null);
     setSelectedChange(null);
+    setError(null);
     setConversation(prev => [...prev, {user: prompt, ai: ''}]);
 
-    vscodeApi.postMessage({ command: 'analyze-code', payload: { prompt, selectedFiles: selectedFilePaths } });
+    const jobId = crypto.randomUUID();
+    vscodeApi.postMessage({ command: 'analyze-code', payload: { prompt, selectedFiles: selectedFilePaths, jobId } });
   }, [selectedFilePaths]);
 
-  const handleUpdateChangeStatus = useCallback((filePath: string, status: CodeChange['status']) => {
+  const handleCancelAnalysis = useCallback(() => {
+    setIsLoading(false);
+    setStatusMessage('Cancellation request sent...');
+    vscodeApi.postMessage({ command: 'cancel-analysis' });
+  }, []);
+
+  const handleUpdateChangeStatus = useCallback((changeIndex: number, status: ChangeStatus) => {
     setAnalysisResult(prevResult => {
       if (!prevResult) return null;
-      return {
-        ...prevResult,
-        changes: prevResult.changes.map(c => 
-          c.filePath === filePath ? { ...c, status } : c
-        ),
-      };
+      const newChanges = [...prevResult.changes];
+      newChanges[changeIndex] = { ...newChanges[changeIndex], status };
+      return { ...prevResult, changes: newChanges };
     });
   }, []);
 
@@ -131,12 +144,19 @@ const App: React.FC = () => {
             </div>
         </aside>
         <main className="flex-grow flex flex-col">
-          <div className="flex-grow p-6 overflow-y-auto">
+          <div className="flex-grow p-6 overflow-y-auto relative">
+             {error && <ErrorDisplay error={error} onDismiss={() => setError(null)} />}
             {!analysisResult && !isLoading && <ChatInterface onSubmit={handlePromptSubmit} conversation={conversation} />}
             {isLoading && (
               <div className="flex flex-col items-center justify-center h-full text-gray-400">
                 <VscLoading className="animate-spin h-12 w-12 mb-4" />
-                <p className="text-lg">{statusMessage}</p>
+                <p className="text-lg mb-4">{statusMessage}</p>
+                <button
+                    onClick={handleCancelAnalysis}
+                    className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded transition-colors"
+                >
+                    <VscClose className="w-5 h-5" /> Cancel
+                </button>
               </div>
             )}
             {analysisResult && !isLoading && (

@@ -13,33 +13,24 @@ export function calculateChecksum(content: string): string {
     return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-export async function getWorkspaceFiles(): Promise<{ files: FileWithChecksum[], checksums: Map<string, string> }> {
+export async function indexWorkspaceFiles(): Promise<{ files: vscode.Uri[], index: Map<string, vscode.Uri> }> {
     const fileUris = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out,venv,.*}/**');
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
-        return { files: [], checksums: new Map() };
+        return { files: [], index: new Map() };
     }
 
-    const checksums = new Map<string, string>();
-    const filesWithChecksum: FileWithChecksum[] = [];
-
+    const index = new Map<string, vscode.Uri>();
     for (const uri of fileUris) {
-        try {
-            const document = await vscode.workspace.openTextDocument(uri);
-            const content = document.getText();
-            const checksum = calculateChecksum(content);
-            const relativePath = path.relative(workspaceRoot, uri.fsPath);
-            checksums.set(relativePath, checksum);
-            filesWithChecksum.push({ uri, relativePath, content, checksum });
-        } catch (e) {
-            console.warn(`Could not read file ${uri.fsPath}, skipping.`, e);
-        }
+        const relativePath = path.relative(workspaceRoot, uri.fsPath);
+        index.set(relativePath, uri);
     }
-
-    return { files: filesWithChecksum, checksums };
+    return { files: fileUris, index };
 }
 
-export function buildFileTree(files: vscode.Uri[]): { id: string; name: string; type: 'file' | 'directory'; children?: any[], path: string, isSelected?: boolean } {
+const MAX_DIR_CHILDREN = 200;
+
+export function buildFileTree(files: vscode.Uri[]): { id: string; name: string; type: 'file' | 'directory' | 'placeholder'; children?: any[], path: string, isSelected?: boolean } {
     const root: any = { id: 'root', name: vscode.workspace.name || 'root', type: 'directory', children: [], path: '' };
 
     if (!vscode.workspace.workspaceFolders) {
@@ -47,6 +38,9 @@ export function buildFileTree(files: vscode.Uri[]): { id: string; name: string; 
     }
 
     const workspaceRootPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+
+    // Sort files alphabetically
+    files.sort((a, b) => a.fsPath.localeCompare(b.fsPath));
 
     for (const fileUri of files) {
         const relativePath = path.relative(workspaceRootPath, fileUri.fsPath);
@@ -71,7 +65,19 @@ export function buildFileTree(files: vscode.Uri[]): { id: string; name: string; 
                 if (!isLastPart) {
                     childNode.children = [];
                 }
-                currentNode.children.push(childNode);
+
+                // Implement paging for large directories
+                if (currentNode.children.length < MAX_DIR_CHILDREN) {
+                    currentNode.children.push(childNode);
+                } else if (currentNode.children.length === MAX_DIR_CHILDREN) {
+                    const remaining = '...'; // In a real scenario, you might calculate the actual number
+                    currentNode.children.push({
+                        id: `${currentNode.id}-placeholder`,
+                        name: `... and more files`,
+                        type: 'placeholder',
+                        path: currentNode.path,
+                    });
+                }
             }
             currentNode = childNode;
         }

@@ -1,15 +1,37 @@
+
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as diff from 'diff';
 import { calculateChecksum } from './workspaceUtils';
 
-interface CodeChange {
-    filePath: string;
-    diff: string;
+// This type needs to be kept in sync with the web-ui/src/types.ts
+type FileSystemOperation =
+  | { operation: 'modify'; filePath: string; diff: string; }
+  | { operation: 'create'; filePath: string; content: string; }
+  | { operation: 'delete'; filePath: string; }
+  | { operation: 'move'; oldPath: string; newPath: string; };
+
+async function verifyFileChecksum(filePath: string, workspaceRoot: vscode.Uri, originalChecksums: Map<string, string>): Promise<void> {
+    const fileUri = vscode.Uri.joinPath(workspaceRoot, filePath);
+    try {
+        const contentBytes = await vscode.workspace.fs.readFile(fileUri);
+        const currentContent = Buffer.from(contentBytes).toString('utf-8');
+        const currentChecksum = calculateChecksum(currentContent);
+        const originalChecksum = originalChecksums.get(filePath);
+
+        if (originalChecksum && currentChecksum !== originalChecksum) {
+            throw new Error(`File ${filePath} has been modified since analysis. Please re-run the analysis.`);
+        }
+    } catch (error) {
+        if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') {
+             throw new Error(`File ${filePath} was not found. It may have been moved or deleted.`);
+        }
+        throw error; // Re-throw other errors
+    }
 }
 
-export async function applyChanges(changesToApply: CodeChange[], originalChecksums: Map<string, string>): Promise<void> {
-    if (!Array.isArray(changesToApply) || changesToApply.length === 0) {
+export async function applyChanges(operationsToApply: FileSystemOperation[], originalChecksums: Map<string, string>): Promise<void> {
+    if (!Array.isArray(operationsToApply) || operationsToApply.length === 0) {
         return;
     }
 
@@ -18,48 +40,59 @@ export async function applyChanges(changesToApply: CodeChange[], originalChecksu
     if (!workspaceFolder) {
         throw new Error("Cannot apply changes without an open workspace folder.");
     }
+    const workspaceRoot = workspaceFolder.uri;
 
-    // --- Concurrency Check ---
-    for (const change of changesToApply) {
-        const fileUri = vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, change.filePath));
-        const document = await vscode.workspace.openTextDocument(fileUri);
-        const currentContent = document.getText();
-        const currentChecksum = calculateChecksum(currentContent);
-        const originalChecksum = originalChecksums.get(change.filePath);
-        
-        if (originalChecksum && currentChecksum !== originalChecksum) {
-            throw new Error(`File ${change.filePath} has been modified since analysis. Please re-run the analysis.`);
+    // --- Concurrency & Pre-condition Checks ---
+    for (const op of operationsToApply) {
+        if (op.operation === 'modify' || op.operation === 'delete') {
+            await verifyFileChecksum(op.filePath, workspaceRoot, originalChecksums);
+        } else if (op.operation === 'move') {
+            await verifyFileChecksum(op.oldPath, workspaceRoot, originalChecksums);
         }
     }
 
-    // --- Apply Patches ---
-    for (const change of changesToApply) {
-        const fileUri = vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, change.filePath));
-        
-        const patches = diff.parsePatch(change.diff);
-        if (patches.length !== 1) {
-            throw new Error(`Invalid patch format for ${change.filePath}. Expected 1 patch, got ${patches.length}.`);
-        }
-        const patch = patches[0];
+    // --- Apply Operations to WorkspaceEdit ---
+    for (const op of operationsToApply) {
+        switch (op.operation) {
+            case 'create': {
+                const newFileUri = vscode.Uri.joinPath(workspaceRoot, op.filePath);
+                // Ensure directory exists - create file is not recursive
+                await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(newFileUri, '..'));
+                workspaceEdit.createFile(newFileUri, { ignoreIfExists: true });
+                workspaceEdit.insert(newFileUri, new vscode.Position(0, 0), op.content);
+                break;
+            }
+            case 'delete': {
+                const fileUri = vscode.Uri.joinPath(workspaceRoot, op.filePath);
+                workspaceEdit.deleteFile(fileUri, { ignoreIfNotExists: true });
+                break;
+            }
+            case 'move': {
+                const oldUri = vscode.Uri.joinPath(workspaceRoot, op.oldPath);
+                const newUri = vscode.Uri.joinPath(workspaceRoot, op.newPath);
+                workspaceEdit.renameFile(oldUri, newUri, { overwrite: false });
+                break;
+            }
+            case 'modify': {
+                const fileUri = vscode.Uri.joinPath(workspaceRoot, op.filePath);
+                const patches = diff.parsePatch(op.diff);
+                if (patches.length !== 1) {
+                    throw new Error(`Invalid patch format for ${op.filePath}. Expected 1 patch, got ${patches.length}.`);
+                }
+                const patch = patches[0];
 
-        // Iterate hunks backwards to avoid line number shifts
-        for (const hunk of [...patch.hunks].reverse()) {
-            const startLine = hunk.oldStart - 1; 
-            const linesToRemove = hunk.oldLines;
-
-            const range = new vscode.Range(
-                new vscode.Position(startLine, 0),
-                new vscode.Position(startLine + linesToRemove, 0)
-            );
-            
-            const newContent = hunk.lines
-                .filter(line => line.charAt(0) !== '-')
-                .map(line => line.substring(1))
-                .join('\\n');
-            
-            const replacementText = (hunk.newLines > 0 && linesToRemove > 0) ? newContent + '\\n' : newContent;
-            
-            workspaceEdit.replace(fileUri, range, replacementText);
+                for (const hunk of [...patch.hunks].reverse()) {
+                    const startLine = hunk.oldStart - 1;
+                    const linesToRemove = hunk.oldLines;
+                    const range = new vscode.Range(
+                        new vscode.Position(startLine, 0),
+                        new vscode.Position(startLine + linesToRemove, 0)
+                    );
+                    const newContent = hunk.lines.filter(l => l[0] !== '-').map(l => l.substring(1)).join('\n');
+                    workspaceEdit.replace(fileUri, range, newContent + (linesToRemove > 0 ? '\n' : ''));
+                }
+                break;
+            }
         }
     }
     

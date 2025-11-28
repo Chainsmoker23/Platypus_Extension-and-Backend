@@ -1,6 +1,8 @@
+
 import { Router } from 'express';
 import { generateAnalysis } from '../services/geminiService';
-import { AnalysisRequest } from '../types';
+// FIX: Changed import path to point to the correct types file.
+import { AnalysisRequest } from '../types/index';
 
 const router = Router();
 
@@ -12,7 +14,8 @@ router.post('/', async (req, res) => {
     }
 
     try {
-        const result = await generateAnalysis(prompt, files);
+        // FIX: Added missing AbortSignal argument to the generateAnalysis call.
+        const result = await generateAnalysis(prompt, files, new AbortController().signal);
         res.json(result);
     } catch (error) {
         console.error('Error in analysis endpoint:', error);

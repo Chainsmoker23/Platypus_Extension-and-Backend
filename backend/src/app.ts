@@ -1,7 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import { analyzeRouter } from './routes/analyzeRoutes';
+import { jobRouter } from './routes/jobRoutes';
 import { loggingMiddleware } from './middlewares/loggingMiddleware';
+import { errorHandler } from './middlewares/errorHandler';
 
 const app = express();
 
@@ -17,6 +19,10 @@ app.get('/', (req, res) => {
   res.send('Platypus Backend is running!');
 });
 app.use('/api/v1/analyze', analyzeRouter);
+app.use('/api/v1/jobs', jobRouter);
 
+
+// Error Handling Middleware (must be last)
+app.use(errorHandler);
 
 export { app };

@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 type IconProps = React.SVGProps<SVGSVGElement>;
@@ -54,4 +55,20 @@ export const VscSparkle: React.FC<IconProps> = (props) => (
 
 export const VscUndo: React.FC<IconProps> = (props) => (
     <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M.5 7.5H10c2.21 0 4 1.79 4 4v.5h-1.5v-.5c0-1.38-1.12-2.5-2.5-2.5H.5l3.15 3.15L2.59 12.5.09 10 2.59 7.5l1.06 1.06L.5 7.5z"/></svg>
+);
+
+export const VscEllipsis: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M3 8a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm5 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm5 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/></svg>
+);
+
+export const VscNewFile: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M3 1.5h6.5L12 4v3.5H3V1.5zM4 2.5v5h7V4.5H8.5V2.5H4zm4.5 7H12v-1h-1v-1h-1v1h-1v1h.5v.5H8v1h.5v.5h-1v1h1v-1h.5v-.5H12v-1h-1v-1h-1.5v-.5zM3 8.5h3.5v5H3v-5zm1 1v3h1.5v-3H4z"/></svg>
+);
+
+export const VscTrash: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M4.5 2.5l.5-1h5l.5 1H14v1H2v-1h2.5zm-.5 2v9h10v-9h-10zm2 1h1v6h-1v-6zm3 0h1v6h-1v-6z"/></svg>
+);
+
+export const VscMove: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M12.5 6.5L15 8l-2.5 1.5v-3zM9.5 9.5l1.5 2.5H8l-1.5-2.5h3zM6.5 6.5v3L5 8l1.5-1.5zM9.5 3.5L8 5l-1.5-1.5h3zM8 0L5.5 2.5H2v12h12v-12H10.5L8 0zM3 13.5V3.5h2.09L7 5.41 8 6.32l1- .91 1.91-1.91H13v10H3z"/></svg>
 );

@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import type { FileNode } from '../types';
-import { VscFolder, VscFile, VscChevronRight, VscChevronDown } from './icons';
+import { VscFolder, VscFile, VscChevronRight, VscChevronDown, VscEllipsis } from './icons';
 
 interface FileTreeProps {
   node: FileNode;
@@ -9,20 +10,38 @@ interface FileTreeProps {
   selectedPaths: string[];
 }
 
+// A simple map to cache isOpen state across re-renders
+const openStateCache = new Map<string, boolean>();
+
 export const FileTree: React.FC<FileTreeProps> = ({ node, level = 0, onSelectionChange, selectedPaths }) => {
-  const [isOpen, setIsOpen] = useState(level < 2);
+  const [isOpen, setIsOpen] = useState(openStateCache.get(node.id) ?? level < 2);
 
   const isDirectory = node.type === 'directory';
+  const isPlaceholder = node.type === 'placeholder';
 
   const handleToggle = () => {
     if (isDirectory) {
-      setIsOpen(!isOpen);
+      const newState = !isOpen;
+      setIsOpen(newState);
+      openStateCache.set(node.id, newState);
     }
   };
 
   const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onSelectionChange(node.path, e.target.checked);
   };
+
+  if (isPlaceholder) {
+    return (
+       <div
+        className="flex items-center py-1 px-2 text-gray-500"
+        style={{ paddingLeft: `${level * 16}px` }}
+      >
+        <VscEllipsis className="h-4 w-4 mr-1 flex-shrink-0" />
+        <span className="truncate italic text-sm">{node.name}</span>
+      </div>
+    )
+  }
 
   const Icon = isDirectory ? VscFolder : VscFile;
   const ChevronIcon = isOpen ? VscChevronDown : VscChevronRight;
