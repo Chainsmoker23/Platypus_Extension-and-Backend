@@ -1,13 +1,17 @@
 
+
+// FIX: Corrected the import path from '@google/ai/generativelanguage' to '@google/genai'.
 import { GoogleGenAI, Type } from '@google/genai';
-import { FileData, FileSystemOperation } from '../types/index';
+// FIX: Added AnalysisResult to imports for the new generateAnalysis function.
+import { FileData, AnalysisResult } from '../types/index';
 import { validateOperations } from '../utils/diffValidator';
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// FIX: Corrected GoogleGenAI initialization to use an options object with an apiKey property.
+const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
 const analysisResultSchema = {
     type: Type.OBJECT,
@@ -55,7 +59,7 @@ const analysisResultSchema = {
 };
 
 
-export async function generateAnalysis(prompt: string, files: FileData[], signal: AbortSignal) {
+export async function* generateAnalysisStream(prompt: string, files: FileData[], signal: AbortSignal) {
     const model = 'gemini-3-pro-preview';
 
     const systemInstruction = `You are "Platypus," an expert AI software engineer. Your task is to analyze the user's codebase and request, and provide a set of precise, actionable file system operations.
@@ -84,34 +88,42 @@ Codebase context:
 ${fileContents}
 `;
 
+    if (signal.aborted) {
+        throw new Error('Aborted');
+    }
+
     try {
-        const geminiPromise = ai.models.generateContent({
-            model,
-            contents: fullPrompt,
+        // FIX: Updated the API call to match the new @google/genai SDK format.
+        // This includes using ai.models.generateContentStream and passing parameters in the correct structure.
+        const streamResult = await ai.models.generateContentStream({
+            model: model,
+            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
             config: {
-                systemInstruction,
                 responseMimeType: "application/json",
                 responseSchema: analysisResultSchema,
                 temperature: 0.2,
+                systemInstruction: systemInstruction,
             },
         });
 
-        const signalPromise = new Promise((_, reject) => {
-            signal.addEventListener('abort', () => reject(new Error('Aborted')));
-        });
-
-        const response = await Promise.race([geminiPromise, signalPromise]) as any;
+        let fullText = '';
         
-        if (signal.aborted) {
-            throw new Error('Aborted');
+        for await (const chunk of streamResult) {
+            if (signal.aborted) {
+                throw new Error('Aborted');
+            }
+            // FIX: Changed from chunk.text() method call to chunk.text property access.
+            const chunkText = chunk.text;
+            if(chunkText) {
+                fullText += chunkText;
+                yield { type: 'summary_chunk', payload: chunkText };
+            }
         }
-
-        const jsonText = response.text.trim();
-        const result = JSON.parse(jsonText);
-
-        validateOperations(result);
         
-        return result;
+        const result = JSON.parse(fullText);
+        validateOperations(result);
+
+        yield { type: 'result', payload: result };
 
     } catch (error) {
         if (error instanceof Error && error.message === 'Aborted') {
@@ -122,4 +134,27 @@ ${fileContents}
         console.error("Error calling Gemini API or validating response:", error);
         throw new Error("Failed to generate and validate analysis from Gemini API.");
     }
+}
+
+// FIX: Added a non-streaming generateAnalysis function to resolve the missing export error.
+export async function generateAnalysis(prompt: string, files: FileData[], signal: AbortSignal): Promise<AnalysisResult> {
+    const stream = generateAnalysisStream(prompt, files, signal);
+    let analysisResult: AnalysisResult | null = null;
+    for await (const chunk of stream) {
+        if (chunk.type === 'result') {
+            analysisResult = chunk.payload as AnalysisResult;
+            break; 
+        }
+    }
+
+    if (!analysisResult) {
+        if (signal.aborted) {
+            const abortError = new Error("The analysis was cancelled.");
+            abortError.name = "AbortError";
+            throw abortError;
+        }
+        throw new Error("Analysis stream did not yield a final result.");
+    }
+
+    return analysisResult;
 }

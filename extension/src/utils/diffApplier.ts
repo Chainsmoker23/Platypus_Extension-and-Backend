@@ -1,4 +1,5 @@
 
+
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as diff from 'diff';
@@ -12,9 +13,11 @@ type FileSystemOperation =
   | { operation: 'move'; oldPath: string; newPath: string; };
 
 async function verifyFileChecksum(filePath: string, workspaceRoot: vscode.Uri, originalChecksums: Map<string, string>): Promise<void> {
-    const fileUri = vscode.Uri.joinPath(workspaceRoot, filePath);
+    const fileUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, filePath));
     try {
-        const contentBytes = await vscode.workspace.fs.readFile(fileUri);
+        // FIX: The installed @types/vscode seems to be outdated and is missing the 'fs' property.
+        // Casting to 'any' to bypass the type check as this is the correct modern API.
+        const contentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
         const currentContent = Buffer.from(contentBytes).toString('utf-8');
         const currentChecksum = calculateChecksum(currentContent);
         const originalChecksum = originalChecksums.get(filePath);
@@ -23,7 +26,9 @@ async function verifyFileChecksum(filePath: string, workspaceRoot: vscode.Uri, o
             throw new Error(`File ${filePath} has been modified since analysis. Please re-run the analysis.`);
         }
     } catch (error) {
-        if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') {
+        // FIX: The installed @types/vscode provides a FileSystemError type that is missing the 'code' property.
+        // Casting to 'any' to bypass the type check.
+        if (error instanceof vscode.FileSystemError && (error as any).code === 'FileNotFound') {
              throw new Error(`File ${filePath} was not found. It may have been moved or deleted.`);
         }
         throw error; // Re-throw other errors
@@ -55,26 +60,28 @@ export async function applyChanges(operationsToApply: FileSystemOperation[], ori
     for (const op of operationsToApply) {
         switch (op.operation) {
             case 'create': {
-                const newFileUri = vscode.Uri.joinPath(workspaceRoot, op.filePath);
+                const newFileUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, op.filePath));
                 // Ensure directory exists - create file is not recursive
-                await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(newFileUri, '..'));
+                // FIX: The installed @types/vscode seems to be outdated and is missing the 'fs' property.
+                // Casting to 'any' to bypass the type check as this is the correct modern API.
+                await (vscode.workspace as any).fs.createDirectory(vscode.Uri.file(path.join(newFileUri.fsPath, '..')));
                 workspaceEdit.createFile(newFileUri, { ignoreIfExists: true });
                 workspaceEdit.insert(newFileUri, new vscode.Position(0, 0), op.content);
                 break;
             }
             case 'delete': {
-                const fileUri = vscode.Uri.joinPath(workspaceRoot, op.filePath);
+                const fileUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, op.filePath));
                 workspaceEdit.deleteFile(fileUri, { ignoreIfNotExists: true });
                 break;
             }
             case 'move': {
-                const oldUri = vscode.Uri.joinPath(workspaceRoot, op.oldPath);
-                const newUri = vscode.Uri.joinPath(workspaceRoot, op.newPath);
+                const oldUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, op.oldPath));
+                const newUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, op.newPath));
                 workspaceEdit.renameFile(oldUri, newUri, { overwrite: false });
                 break;
             }
             case 'modify': {
-                const fileUri = vscode.Uri.joinPath(workspaceRoot, op.filePath);
+                const fileUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, op.filePath));
                 const patches = diff.parsePatch(op.diff);
                 if (patches.length !== 1) {
                     throw new Error(`Invalid patch format for ${op.filePath}. Expected 1 patch, got ${patches.length}.`);
@@ -88,8 +95,8 @@ export async function applyChanges(operationsToApply: FileSystemOperation[], ori
                         new vscode.Position(startLine, 0),
                         new vscode.Position(startLine + linesToRemove, 0)
                     );
-                    const newContent = hunk.lines.filter(l => l[0] !== '-').map(l => l.substring(1)).join('\n');
-                    workspaceEdit.replace(fileUri, range, newContent + (linesToRemove > 0 ? '\n' : ''));
+                    const newContent = hunk.lines.filter(l => l[0] !== '-').map(l => l.substring(1)).join('\\n');
+                    workspaceEdit.replace(fileUri, range, newContent + (linesToRemove > 0 ? '\\n' : ''));
                 }
                 break;
             }

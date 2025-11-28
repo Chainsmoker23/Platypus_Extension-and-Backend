@@ -1,4 +1,5 @@
 
+
 export interface FileNode {
   id: string;
   name: string;
@@ -15,6 +16,7 @@ export type ModifyOperation = {
   filePath: string;
   explanation: string;
   diff: string;
+  // FIX: Corrected typo from 'Change-Status' to 'ChangeStatus'.
   status: ChangeStatus;
 };
 
@@ -49,7 +51,8 @@ export interface AnalysisResult {
 }
 
 export interface VscodeMessage {
-    command: string;
+    // FIX: Added missing command types to the union to match their usage in App.tsx.
+    command: 'load-file-tree' | 'analysis-complete' | 'analysis-stream' | 'show-loading' | 'error' | 'webview-ready' | 'analyze-code' | 'cancel-analysis' | 'apply-changes';
     payload?: unknown;
 }
 

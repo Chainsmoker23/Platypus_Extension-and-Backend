@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { analyzeRouter } from './routes/analyzeRoutes';
 import { jobRouter } from './routes/jobRoutes';
+import { codeIntelligenceRouter } from './routes/codeIntelligenceRoutes';
 import { loggingMiddleware } from './middlewares/loggingMiddleware';
 import { errorHandler } from './middlewares/errorHandler';
 
@@ -20,6 +21,7 @@ app.get('/', (req, res) => {
 });
 app.use('/api/v1/analyze', analyzeRouter);
 app.use('/api/v1/jobs', jobRouter);
+app.use('/api/v1/code-intelligence', codeIntelligenceRouter);
 
 
 // Error Handling Middleware (must be last)

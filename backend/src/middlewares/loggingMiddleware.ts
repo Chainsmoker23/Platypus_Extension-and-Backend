@@ -1,3 +1,4 @@
+
 import { RequestHandler } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -6,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 // This also resolves the argument type error for app.use() in app.ts.
 export const loggingMiddleware: RequestHandler = (req, res, next) => {
   const requestId = uuidv4();
-  // @ts-ignore
+  // FIX: Removed @ts-ignore as the custom 'id' property is now defined in 'backend/src/types/express/index.d.ts'.
   req.id = requestId;
   
   const startTime = Date.now();

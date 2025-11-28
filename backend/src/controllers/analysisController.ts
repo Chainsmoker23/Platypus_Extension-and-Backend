@@ -1,6 +1,6 @@
 
 import { RequestHandler } from 'express';
-import { generateAnalysis } from '../services/geminiService';
+import { generateAnalysisStream } from '../services/geminiService';
 // FIX: Changed import path to point to the correct types file.
 import { AnalysisRequest } from '../types/index';
 import { jobManager } from '../services/jobManager';
@@ -24,10 +24,21 @@ export const handleAnalysisRequest: RequestHandler = async (req, res, next) => {
 
     try {
         console.log(`[${requestId}] Received analysis request for job ${jobId} with ${files.length} files.`);
-        const result = await generateAnalysis(prompt, files, signal);
-        console.log(`[${requestId}] Analysis for job ${jobId} successful. Sending response.`);
+        
+        // Set headers for streaming
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        const analysisGenerator = generateAnalysisStream(prompt, files, signal);
+
+        for await (const result of analysisGenerator) {
+            res.write(JSON.stringify(result) + '\\n');
+        }
+
+        console.log(`[${requestId}] Analysis for job ${jobId} successful. Stream ended.`);
         jobManager.complete(jobId);
-        res.json(result);
+        res.end();
+
     } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
             console.log(`[${requestId}] Job ${jobId} was cancelled.`);

@@ -1,5 +1,6 @@
 
 
+
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { indexWorkspaceFiles, buildFileTree, calculateChecksum } from './utils/workspaceUtils';
@@ -89,7 +90,7 @@ export class PlatypusPanel {
     }
 
     private async handleAnalysisRequest(payload: { prompt: string; selectedFiles: string[]; jobId: string }) {
-        this._panel.webview.postMessage({ command: 'show-loading', payload: 'Reading files and analyzing codebase...' });
+        this._panel.webview.postMessage({ command: 'show-loading', payload: 'Analyzing codebase...' });
         this._activeJobId = payload.jobId;
         this._activeAnalysisChecksums.clear();
 
@@ -119,8 +120,14 @@ export class PlatypusPanel {
 
             const fileData = (await Promise.all(fileDataPromises)).filter(Boolean) as FileData[];
             
-            const result = await callBackend(payload.prompt, fileData, this._activeJobId);
-            this._panel.webview.postMessage({ command: 'analysis-complete', payload: result });
+            for await (const result of callBackend(payload.prompt, fileData, this._activeJobId)) {
+                if (result.type === 'summary_chunk') {
+                    this._panel.webview.postMessage({ command: 'analysis-stream', payload: result.payload });
+                } else if (result.type === 'result') {
+                    this._panel.webview.postMessage({ command: 'analysis-complete', payload: result.payload });
+                }
+            }
+
         } catch (e: any) {
              console.error('Error analyzing code:', e);
              this._panel.webview.postMessage({ 
@@ -177,8 +184,12 @@ export class PlatypusPanel {
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
-        const scriptUri = webview.asWebviewUri(vscode.Uri.file(path.join(this._extensionUri.fsPath, 'web-ui', 'dist', 'assets', 'index.js')));
-        const stylesUri = webview.asWebviewUri(vscode.Uri.file(path.join(this._extensionUri.fsPath, 'web-ui', 'dist', 'assets', 'index.css')));
+        // FIX: The installed @types/vscode seems to be outdated and is missing 'asWebviewUri'.
+        // Casting to 'any' to bypass the type check as this is the correct modern API.
+        const scriptUri = (webview as any).asWebviewUri(vscode.Uri.file(path.join(this._extensionUri.fsPath, 'web-ui', 'dist', 'assets', 'index.js')));
+        // FIX: The installed @types/vscode seems to be outdated and is missing 'asWebviewUri'.
+        // Casting to 'any' to bypass the type check as this is the correct modern API.
+        const stylesUri = (webview as any).asWebviewUri(vscode.Uri.file(path.join(this._extensionUri.fsPath, 'web-ui', 'dist', 'assets', 'index.css')));
         const nonce = getNonce();
 
         return `<!DOCTYPE html>

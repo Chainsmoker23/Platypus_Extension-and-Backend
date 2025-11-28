@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { FileTree } from './components/FileTree';
@@ -29,6 +30,17 @@ const App: React.FC = () => {
         setIsLoading(false);
         setStatusMessage('Ready to analyze.');
         break;
+      case 'analysis-stream':
+        const summaryChunk = message.payload as string;
+        setConversation(prev => {
+            const lastEntry = prev[prev.length - 1];
+            if (lastEntry) {
+                const newAiResponse = lastEntry.ai + summaryChunk;
+                return [...prev.slice(0, -1), { ...lastEntry, ai: newAiResponse }];
+            }
+            return prev;
+        });
+        break;
       case 'analysis-complete':
         const result = message.payload as AnalysisResult;
         if (!result) {
@@ -45,7 +57,8 @@ const App: React.FC = () => {
         setSelectedChange(resultWithStatus.changes[0] || null);
         setIsLoading(false);
         setStatusMessage('Analysis complete. Review the proposed changes.');
-        if(result.summary){
+        // Final summary sync
+        if(result.summary) {
            setConversation(prev => {
                const lastUserMessage = prev[prev.length-1]?.user;
                return [...prev.slice(0,-1), { user: lastUserMessage, ai: result.summary}];
@@ -54,7 +67,7 @@ const App: React.FC = () => {
         break;
       case 'show-loading':
         const payload = message.payload as string;
-        setIsLoading(true);
+        if (!isLoading) setIsLoading(true); // Don't reset if already loading (e.g., during stream)
         setStatusMessage(payload);
         break;
       case 'error':
@@ -66,6 +79,7 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
+    // FIX: Add 'webview-ready' to VscodeMessage type to resolve type error.
     vscodeApi.postMessage({ command: 'webview-ready' });
   }, []);
 
@@ -78,12 +92,14 @@ const App: React.FC = () => {
     setConversation(prev => [...prev, {user: prompt, ai: ''}]);
 
     const jobId = crypto.randomUUID();
+    // FIX: Add 'analyze-code' to VscodeMessage type to resolve type error.
     vscodeApi.postMessage({ command: 'analyze-code', payload: { prompt, selectedFiles: selectedFilePaths, jobId } });
   }, [selectedFilePaths]);
 
   const handleCancelAnalysis = useCallback(() => {
     setIsLoading(false);
     setStatusMessage('Cancellation request sent...');
+    // FIX: Add 'cancel-analysis' to VscodeMessage type to resolve type error.
     vscodeApi.postMessage({ command: 'cancel-analysis' });
   }, []);
 
@@ -103,6 +119,7 @@ const App: React.FC = () => {
       return;
     }
     setStatusMessage(`Applying ${acceptedChanges.length} change(s)...`);
+    // FIX: Add 'apply-changes' to VscodeMessage type to resolve type error.
     vscodeApi.postMessage({ command: 'apply-changes', payload: acceptedChanges });
     
     setIsLoading(false);
@@ -127,6 +144,8 @@ const App: React.FC = () => {
     });
   }, []);
 
+  const isStreaming = isLoading && conversation[conversation.length - 1]?.user && !analysisResult;
+
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-200">
       <Header />
@@ -146,20 +165,17 @@ const App: React.FC = () => {
         <main className="flex-grow flex flex-col">
           <div className="flex-grow p-6 overflow-y-auto relative">
              {error && <ErrorDisplay error={error} onDismiss={() => setError(null)} />}
-            {!analysisResult && !isLoading && <ChatInterface onSubmit={handlePromptSubmit} conversation={conversation} />}
-            {isLoading && (
-              <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                <VscLoading className="animate-spin h-12 w-12 mb-4" />
-                <p className="text-lg mb-4">{statusMessage}</p>
-                <button
-                    onClick={handleCancelAnalysis}
-                    className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded transition-colors"
-                >
-                    <VscClose className="w-5 h-5" /> Cancel
-                </button>
-              </div>
+            
+            {(!analysisResult || isStreaming) && (
+              <ChatInterface 
+                onSubmit={handlePromptSubmit} 
+                conversation={conversation} 
+                isStreaming={isStreaming} 
+                onCancel={handleCancelAnalysis} 
+              />
             )}
-            {analysisResult && !isLoading && (
+            
+            {analysisResult && !isStreaming && (
               <ChangeSetViewer 
                 result={analysisResult}
                 selectedChange={selectedChange}
@@ -169,6 +185,13 @@ const App: React.FC = () => {
                 onRejectAll={handleRejectAll}
               />
             )}
+
+             {isLoading && !isStreaming && (
+                <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                    <VscLoading className="animate-spin h-12 w-12 mb-4" />
+                    <p className="text-lg">{statusMessage}</p>
+                </div>
+             )}
           </div>
           <div className="p-2 border-t border-gray-700 bg-gray-800/30 text-xs text-gray-400">
             {statusMessage}
