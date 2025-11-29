@@ -1,17 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
-import { generateModificationForFile } from '../services/geminiService';
+import { generateWorkspaceAnalysis } from '../services/geminiService';
 // FIX: Changed import path to point to the correct types file.
 import { AnalysisRequest } from '../types/index';
 import { jobManager } from '../services/jobManager';
 
 export const handleAnalysisRequest = async (req: Request, res: Response, next: NextFunction) => {
-    const { prompt, files, jobId } = req.body as AnalysisRequest;
+    const { prompt, files, jobId, selectedFilePaths } = req.body as AnalysisRequest;
     
     const requestId = (req as any).id;
 
     if (!prompt || !files || !Array.isArray(files) || files.length === 0) {
-        console.error(`[${requestId}] Bad Request: Missing prompt or the single file.`);
-        return res.status(400).json({ error: 'Missing prompt or file' });
+        console.error(`[${requestId}] Bad Request: Missing prompt or files.`);
+        return res.status(400).json({ error: 'Missing prompt or files' });
     }
     
     if (!jobId) {
@@ -19,13 +19,12 @@ export const handleAnalysisRequest = async (req: Request, res: Response, next: N
         return res.status(400).json({ error: 'Missing jobId' });
     }
 
-    const singleFile = files[0];
     const signal = jobManager.create(jobId);
 
     try {
-        console.log(`[${requestId}] Received single-file analysis request for job ${jobId} on file ${singleFile.filePath}.`);
+        console.log(`[${requestId}] Received workspace analysis request for job ${jobId} with ${files.length} files.`);
         
-        const result = await generateModificationForFile(prompt, singleFile, signal);
+        const result = await generateWorkspaceAnalysis(prompt, files, signal, selectedFilePaths);
 
         console.log(`[${requestId}] Analysis for job ${jobId} successful.`);
         jobManager.complete(jobId);

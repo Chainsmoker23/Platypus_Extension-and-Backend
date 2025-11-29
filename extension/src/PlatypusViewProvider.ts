@@ -3,8 +3,7 @@ import * as crypto from 'crypto';
 import { calculateChecksum } from './utils/workspaceUtils';
 import { callBackend, cancelBackendJob } from './utils/backendApi';
 import type { FileData } from './utils/backendApi';
-import { applyChanges } from './utils/diffApplier';
-import { AnalysisResult } from './types';
+import { AnalysisResult, FileSystemOperation } from './types';
 
 
 export class PlatypusViewProvider implements vscode.WebviewViewProvider {
@@ -12,7 +11,7 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
 	private _view?: vscode.WebviewView;
     private _disposables: vscode.Disposable[] = [];
     private _activeJobId: string | null = null;
-    private _activeAnalysisChecksums = new Map<string, string>();
+    private readonly workspaceRoot: string | undefined = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -41,6 +40,59 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private handleAttachFiles = async () => {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+          vscode.window.showErrorMessage("No workspace open");
+          return;
+        }
+      
+        const uris = await vscode.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: true,
+          canSelectMany: true,
+          defaultUri: workspaceFolder.uri,
+          title: "Select files/folders (only inside this project)",
+        });
+      
+        if (uris) {
+          const root = workspaceFolder.uri.fsPath + (process.platform === 'win32' ? '\\' : '/');
+          const paths = uris.map(u => u.fsPath.replace(root, '').replace(/\\/g, '/')).filter(p => p);
+          this._view?.webview.postMessage({ command: 'update-selected-files', payload: paths });
+        }
+    };
+
+    private applyPatch(original: string, patch: string): string | null {
+        try {
+          const lines = original.split('\n');
+          const patchLines = patch.split('\n');
+          let result: string[] = [];
+      
+          let i = 0;
+          for (const line of patchLines) {
+            if (line.startsWith('@@')) {
+              const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+              if (match) {
+                const targetLine = parseInt(match[1]) - 1;
+                while (i < targetLine && i < lines.length) {
+                  result.push(lines[i++]);
+                }
+              }
+            } else if (line.startsWith('+')) {
+              result.push(line.slice(1));
+            } else if (!line.startsWith('-') && !line.startsWith('\\')) {
+              result.push(line);
+              i++;
+            }
+          }
+          while (i < lines.length) result.push(lines[i++]);
+          return result.join('\n');
+        } catch(e) {
+          console.error("Error applying patch:", e);
+          return null;
+        }
+    }
+
     private async handleMessage(message: any) {
         if (!this._view) return;
 
@@ -49,59 +101,110 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                 this.postMessage('chat-update', {
                     id: crypto.randomUUID(),
                     role: 'ai',
-                    content: 'Welcome to Platypus AI. Open a file and describe the changes you want to make.',
+                    content: 'Welcome to Platypus AI. Describe the changes you want to make to your project.',
                 });
                 this.postMessage('update-status', { text: `Ready` });
                 break;
+            case 'attach-files': {
+                this.handleAttachFiles();
+                break;
+            }
             case 'submit-prompt':
                 await this.handleAnalysisRequest(message.payload);
                 break;
+            case 'apply-changes': {
+                if (!this.workspaceRoot) {
+                    vscode.window.showErrorMessage("Cannot apply changes without an open workspace.");
+                    return;
+                }
+                const { changes } = message.payload;
+                
+                const applyEdit = new vscode.WorkspaceEdit();
+              
+                for (const change of changes as FileSystemOperation[]) {
+                  const uri = vscode.Uri.joinPath(vscode.Uri.file(this.workspaceRoot), change.filePath);
+              
+                  if (change.type === 'create') {
+                    applyEdit.createFile(uri, { overwrite: false, ignoreIfExists: true });
+                    applyEdit.replace(uri, new vscode.Range(0, 0, 0, 0), change.content || '');
+                  } 
+                  else if (change.type === 'modify' && change.diff) {
+                    try {
+                        let currentContent = '';
+                        try {
+                          const buffer = await vscode.workspace.fs.readFile(uri);
+                          currentContent = Buffer.from(buffer).toString('utf8');
+                        } catch (err) {
+                          // File doesn't exist yet (common for 'create' operations) → safe to ignore
+                          currentContent = '';
+                        }
+                        const newContent = this.applyPatch(currentContent, change.diff);
+                        if (newContent !== null) {
+                            const stats = await vscode.workspace.fs.stat(uri);
+                            const fullRange = new vscode.Range(0, 0, stats.size, 0); // Approximate full range
+                            applyEdit.replace(uri, fullRange, newContent);
+                        } else {
+                            throw new Error(`Failed to apply patch for ${change.filePath}`);
+                        }
+                    } catch (e: any) {
+                        vscode.window.showErrorMessage(`Failed to modify file ${change.filePath}: ${e.message}`);
+                    }
+                  }
+                  else if (change.type === 'delete') {
+                    applyEdit.deleteFile(uri, { recursive: true, ignoreIfNotExists: true });
+                  }
+                }
+              
+                await vscode.workspace.applyEdit(applyEdit);
+                vscode.window.showInformationMessage(`Platypus applied ${changes.length} change(s)`);
+                this.postMessage('update-status', { text: 'Changes applied. Ready.' });
+                this._activeJobId = null;
+                break;
+            }
             case 'cancel-analysis':
                 await this.handleCancelRequest();
                 break;
         }
     }
 
-    private async handleAnalysisRequest(payload: { prompt: string }) {
+    private async handleAnalysisRequest(payload: { prompt: string; selectedFiles: string[] }) {
         if (!this._view) return;
 
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            this.postMessage('error', { message: "Please open a file in the editor before submitting a prompt." });
-            return;
-        }
-        
         this.postMessage('set-loading', true);
-        this.postMessage('update-status', { text: `Analyzing active file...` });
+        this.postMessage('update-status', { text: `Indexing workspace and analyzing request...` });
+
         this._activeJobId = crypto.randomUUID();
-        this._activeAnalysisChecksums.clear();
-
+        
         try {
-            const document = editor.document;
-            const relativePath = vscode.workspace.asRelativePath(document.uri);
-            const content = document.getText();
-            const checksum = calculateChecksum(content);
+            const allFiles = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out,venv,.*}/**');
+            
+            if (allFiles.length === 0) {
+                this.postMessage('error', { message: "Your workspace is empty. Please open a project folder." });
+                this.postMessage('set-loading', false);
+                this.postMessage('update-status', { text: `Error: No files in workspace` });
+                return;
+            }
 
-            this._activeAnalysisChecksums.set(relativePath, checksum);
+            const fileDataForBackend: FileData[] = [];
+            for (const fileUri of allFiles) {
+                const relativePath = vscode.workspace.asRelativePath(fileUri);
+                const contentBytes = await vscode.workspace.fs.readFile(fileUri);
+                const content = Buffer.from(contentBytes).toString('utf-8');
+                const checksum = calculateChecksum(content);
+                fileDataForBackend.push({ filePath: relativePath, content, checksum });
+            }
             
-            // This is a temporary hack to satisfy both the local type and the backend type
-            const fileDataForBackend: any[] = [{ filePath: relativePath, content, checksum }];
+            const result: AnalysisResult = await callBackend(payload.prompt, fileDataForBackend, this._activeJobId, payload.selectedFiles);
             
-            const result: AnalysisResult = await callBackend(payload.prompt, fileDataForBackend, this._activeJobId);
-            
-            this.postMessage('chat-update', {
-                id: crypto.randomUUID(),
-                role: 'ai',
-                content: result.reasoning,
+            this.postMessage('analysis-complete', {
+                reasoning: result.reasoning,
+                changes: result.changes,
+                jobId: this._activeJobId,
             });
-
-            this.postMessage('update-status', { text: `Applying changes...` });
-            await applyChanges(result.changes, this._activeAnalysisChecksums);
-            this.postMessage('update-status', { text: `Changes applied successfully.` });
-
+            this.postMessage('update-status', { text: `Analysis complete. Ready to apply changes.` });
 
         } catch (e: any) {
-             console.error('Error during analysis and application:', e);
+             console.error('Error during analysis:', e);
              this.postMessage('error', {
                 code: e.code || 'extension/analysis-error',
                 message: e.message || 'An unknown error occurred during analysis.',
@@ -110,8 +213,9 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
             this.postMessage('update-status', { text: 'Error' });
         } finally {
             this.postMessage('set-loading', false);
-            this._activeJobId = null;
-            this.postMessage('update-status', { text: `Ready` });
+            if (!this._activeJobId) { // If job was not set or already cleared
+                this.postMessage('update-status', { text: `Ready` });
+            }
         }
     }
 
@@ -119,6 +223,7 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
         if (this._activeJobId) {
             try {
                 await cancelBackendJob(this._activeJobId);
+                this.postMessage('update-status', { text: 'Analysis cancelled.' });
             } catch (e: any) {
                 console.error('Failed to send cancellation request:', e);
                  this.postMessage('error', {
@@ -126,6 +231,9 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                     message: e.message || 'Failed to cancel the analysis.',
                     details: e.details
                 });
+            } finally {
+                 this.postMessage('set-loading', false);
+                 this._activeJobId = null;
             }
         }
     }

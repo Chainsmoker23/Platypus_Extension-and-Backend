@@ -36,13 +36,31 @@ export async function applyChanges(operationsToApply: FileSystemOperation[], ori
     const workspaceRoot = workspaceFolder.uri;
 
     for (const op of operationsToApply) {
-        await verifyFileChecksum(op.filePath, workspaceRoot, originalChecksums);
+        // We only verify checksums for existing files that are being modified or deleted
+        if (op.type === 'modify' || op.type === 'delete') {
+            await verifyFileChecksum(op.filePath, workspaceRoot, originalChecksums);
+        }
     }
 
     for (const op of operationsToApply) {
+        const fileUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, op.filePath));
         switch (op.type) {
+            case 'create': {
+                if (typeof op.content !== 'string') {
+                    throw new Error(`Invalid 'create' operation for ${op.filePath}: content is missing.`);
+                }
+                const newFileContent = Buffer.from(op.content, 'utf-8');
+                workspaceEdit.createFile(fileUri, { ignoreIfExists: false, contents: newFileContent });
+                break;
+            }
+            case 'delete': {
+                workspaceEdit.deleteFile(fileUri, { ignoreIfNotExists: true });
+                break;
+            }
             case 'modify': {
-                const fileUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, op.filePath));
+                if (typeof op.diff !== 'string') {
+                    throw new Error(`Invalid 'modify' operation for ${op.filePath}: diff is missing.`);
+                }
                 const originalContentBytes = await vscode.workspace.fs.readFile(fileUri);
                 const originalContent = Buffer.from(originalContentBytes).toString('utf-8');
 

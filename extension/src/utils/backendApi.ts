@@ -1,16 +1,21 @@
 import * as vscode from 'vscode';
-import { FileData as ImportedFileData } from '../types';
 import { AnalysisResult } from '../types';
 
 const BACKEND_URL = 'http://localhost:3001/api/v1';
 
-export async function callBackend(prompt: string, files: ImportedFileData[], jobId: string): Promise<AnalysisResult> {
+export type FileData = {
+  filePath: string;
+  content: string;
+  checksum: string;
+};
+
+export async function callBackend(prompt: string, files: FileData[], jobId: string, selectedFilePaths: string[]): Promise<AnalysisResult> {
     console.log(`Calling backend for job ${jobId} with prompt and ${files.length} file(s)...`);
     try {
         const response = await fetch(`${BACKEND_URL}/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, files, jobId }),
+            body: JSON.stringify({ prompt, files, jobId, selectedFilePaths }),
         });
 
         const responseBody = await response.json();
@@ -60,4 +65,3 @@ export async function cancelBackendJob(jobId: string) {
         throw error;
     }
 }
-export type FileData = { path: string; content: string; checksum: string };

@@ -73,3 +73,7 @@ export const VscTrash: React.FC<IconProps> = (props) => (
 export const VscMove: React.FC<IconProps> = (props) => (
     <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M12.5 6.5L15 8l-2.5 1.5v-3zM9.5 9.5l1.5 2.5H8l-1.5-2.5h3zM6.5 6.5v3L5 8l1.5-1.5zM9.5 3.5L8 5l-1.5-1.5h3zM8 0L5.5 2.5H2v12h12v-12H10.5L8 0zM3 13.5V3.5h2.09L7 5.41 8 6.32l1- .91 1.91-1.91H13v10H3z"/></svg>
 );
+
+export const VscAttachment: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M8.5 1.5a.5.5 0 0 0-1 0V8c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V3c0-1.65-1.35-3-3-3S4 1.35 4 3v6c0 2.21 1.79 4 4 4s4-1.79 4-4V4.5a.5.5 0 0 0-1 0V9c0 1.65-1.35 3-3 3s-3-1.35-3-3V3c0-1.1.9-2 2-2s2 .9 2 2v5.5a.5.5 0 0 0 1 0V1.5z"/></svg>
+);

@@ -8,12 +8,15 @@ export interface AnalysisRequest {
     prompt:string;
     files: FileData[];
     jobId: string;
+    selectedFilePaths?: string[];
 }
 
 export interface FileSystemOperation {
-  type: 'modify';
+  type: 'modify' | 'create' | 'delete';
   filePath: string;
-  diff: string;
+  diff?: string; // For modify
+  content?: string; // For create
+  explanation?: string; // Why this change is being made
 }
   
 export interface AnalysisResult {
