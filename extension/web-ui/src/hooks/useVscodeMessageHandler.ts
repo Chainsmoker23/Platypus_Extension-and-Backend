@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
-import type { VscodeMessage } from '../types';
+import type { PlatypusMessage } from '../types';
 
-export const useVscodeMessageHandler = (onMessage: (event: MessageEvent<VscodeMessage>) => void) => {
+export const useVscodeMessageHandler = (onMessage: (event: MessageEvent<PlatypusMessage>) => void) => {
   useEffect(() => {
-    const handler = (event: MessageEvent<VscodeMessage>) => {
+    const handler = (event: MessageEvent<PlatypusMessage>) => {
       onMessage(event);
     };
 

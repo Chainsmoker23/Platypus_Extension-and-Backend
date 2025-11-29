@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 
 type IconProps = React.SVGProps<SVGSVGElement>;
@@ -46,7 +47,7 @@ export const VscLoading: React.FC<IconProps> = (props) => (
 );
 
 export const VscAccount: React.FC<IconProps> = (props) => (
-    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M8 0a4 4 0 0 0-4 4v2a4 4 0 0 0 4 4 4 4 0 0 0 4-4V4a4 4 0 0 0-4-4zM6 4a2 2 0 1 1 4 0v2a2 2 0 1 1-4 0V4z"/><path d="M2.5 12a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h11a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-11z"/></svg>
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M8 0a4 4 0 0 0-4 4v2a4 4 0 0 0 4 4 4 4 0 0 0 4-4V4a4 4 0 0 0-4-4zM6 4a2 2 0 1 1 4 0v2a2 2 0 1 1-4 0V4z"/><path d="M2.5 12a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h11a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5.5h-11z"/></svg>
 );
 
 export const VscSparkle: React.FC<IconProps> = (props) => (

@@ -1,13 +1,9 @@
+// This file defines the shared data structures (API contract) between the extension and the backend.
+
 export interface FileData {
     filePath: string;
     content: string;
     checksum: string;
-}
-
-export interface AnalysisRequest {
-    prompt:string;
-    files: FileData[];
-    jobId: string;
 }
 
 export interface FileSystemOperation {
@@ -19,10 +15,4 @@ export interface FileSystemOperation {
 export interface AnalysisResult {
     reasoning: string;
     changes: FileSystemOperation[];
-}
-
-export interface ApiErrorResponse {
-    code: string;
-    message: string;
-    details?: any;
 }

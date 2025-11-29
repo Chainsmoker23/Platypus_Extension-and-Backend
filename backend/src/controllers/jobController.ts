@@ -1,7 +1,8 @@
-import { RequestHandler } from 'express';
+
+import { Request, Response } from 'express';
 import { jobManager } from '../services/jobManager';
 
-export const handleCancelJob: RequestHandler = (req, res) => {
+export const handleCancelJob = (req: Request, res: Response) => {
     const { jobId } = req.params;
     const success = jobManager.cancel(jobId);
     if (success) {

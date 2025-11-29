@@ -3,6 +3,7 @@
   "displayName": "Platypus AI",
   "description": "AI-powered development system",
   "version": "0.0.1",
+  "icon": "assets/platypus-icon.svg",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -10,16 +11,28 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:platypus-ai.start"
+    "onView:platypusAIView"
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "platypus-ai.start",
-        "title": "Start Platypus AI Analysis"
-      }
-    ]
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "platypus-ai-sidebar",
+          "title": "Platypus AI",
+          "icon": "assets/platypus-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "platypus-ai-sidebar": [
+        {
+          "id": "platypusAIView",
+          "name": "Platypus AI",
+          "type": "webview"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

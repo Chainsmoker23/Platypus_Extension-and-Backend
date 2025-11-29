@@ -1,10 +1,10 @@
 
-import { RequestHandler } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { analyzeProjectStructure } from '../services/codeIntelligenceService';
 // FIX: Changed import path from '../types' to the more specific '../types/index' to avoid ambiguity with the empty 'types.ts' file.
 import { FileData } from '../types/index';
 
-export const handleCodeIntelligenceRequest: RequestHandler = async (req, res, next) => {
+export const handleCodeIntelligenceRequest = async (req: Request, res: Response, next: NextFunction) => {
     const { files } = req.body as { files: FileData[] };
     const requestId = (req as any).id;
     

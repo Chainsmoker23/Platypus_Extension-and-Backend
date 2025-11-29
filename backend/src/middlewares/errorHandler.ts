@@ -1,4 +1,5 @@
-import { ErrorRequestHandler } from 'express';
+
+import { Request, Response, NextFunction } from 'express';
 
 interface ApiError {
     code: string;
@@ -12,7 +13,7 @@ function isApiError(error: any): error is ApiError {
     return typeof error === 'object' && error !== null && 'code' in error && 'message' in error && 'statusCode' in error;
 }
 
-export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
+export const errorHandler = (err: any, req: Request, res: Response, next: NextFunction) => {
     const requestId = (req as any).id || 'N/A';
 
     if (err.name === 'AbortError') {

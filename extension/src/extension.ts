@@ -1,13 +1,14 @@
 import * as vscode from 'vscode';
-import { PlatypusPanel } from './PlatypusPanel';
+import { PlatypusViewProvider } from './PlatypusViewProvider';
 
 export function activate(context: vscode.ExtensionContext) {
+    const provider = new PlatypusViewProvider(vscode.Uri.file(context.extensionPath));
+
     context.subscriptions.push(
-        vscode.commands.registerCommand('platypus-ai.start', () => {
-            // FIX: Property 'extensionUri' does not exist on type 'ExtensionContext'.
-            // Use 'extensionPath' and convert to a Uri for compatibility with older VS Code API versions.
-            PlatypusPanel.createOrShow(vscode.Uri.file(context.extensionPath));
-        })
+        vscode.window.registerWebviewViewProvider(
+            'platypusAIView', // This ID must match the one in package.json
+            provider
+        )
     );
 }
 

@@ -1,18 +1,11 @@
-
-
 import * as vscode from 'vscode';
-
-// FIX: Export FileData interface to be used in other files.
-export interface FileData {
-    filePath: string;
-    content: string;
-    checksum: string;
-}
+import { FileData as ImportedFileData } from '../types';
+import { AnalysisResult } from '../types';
 
 const BACKEND_URL = 'http://localhost:3001/api/v1';
 
-export async function* callBackend(prompt: string, files: FileData[], jobId: string) {
-    console.log(`Calling backend for job ${jobId} with prompt and ${files.length} files...`);
+export async function callBackend(prompt: string, files: ImportedFileData[], jobId: string): Promise<AnalysisResult> {
+    console.log(`Calling backend for job ${jobId} with prompt and ${files.length} file(s)...`);
     try {
         const response = await fetch(`${BACKEND_URL}/analyze`, {
             method: 'POST',
@@ -20,39 +13,14 @@ export async function* callBackend(prompt: string, files: FileData[], jobId: str
             body: JSON.stringify({ prompt, files, jobId }),
         });
 
+        const responseBody = await response.json();
+
         if (!response.ok) {
-            const errorBody = await response.json();
-            console.error('Backend request failed:', response.status, errorBody);
-            throw errorBody;
+            console.error('Backend request failed:', response.status, responseBody);
+            throw responseBody;
         }
 
-        if (!response.body) {
-            throw new Error("Response body is null");
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            
-            const lines = buffer.split('\\n');
-            buffer = lines.pop() || ''; // Keep the last, possibly incomplete line
-
-            for (const line of lines) {
-                if (line.trim()) {
-                    yield JSON.parse(line);
-                }
-            }
-        }
-        // Process any remaining data in the buffer
-        if (buffer.trim()) {
-            yield JSON.parse(buffer);
-        }
+        return responseBody as AnalysisResult;
 
     } catch (error: any) {
         if (!error.code) {
@@ -92,3 +60,4 @@ export async function cancelBackendJob(jobId: string) {
         throw error;
     }
 }
+export type FileData = { path: string; content: string; checksum: string };

@@ -1,23 +1,15 @@
-import type { VscodeMessage } from '../types';
+import type { PlatypusMessage } from '../types';
 
 interface VsCodeApi {
-  postMessage(message: VscodeMessage): void;
+  postMessage(message: PlatypusMessage): void;
+  getState(): any;
+  setState(newState: any): void;
 }
 
-// A check to ensure this code only runs in a VS Code webview context.
-// In a browser, acquireVsCodeApi would be undefined.
-let api: VsCodeApi;
-try {
-  // @ts-ignore
-  api = acquireVsCodeApi();
-} catch (error) {
-  console.error("acquireVsCodeApi not found, using mock API for browser development.", error);
-  // Fallback for browser-based development without the VS Code context
-  api = {
-    postMessage: (message: VscodeMessage) => {
-      console.log('Message from Webview -> Extension (MOCK):', message);
-    },
-  };
-}
+// By unconditionally calling acquireVsCodeApi(), we ensure this code will only
+// run in a real VS Code webview context. Any attempt to run it in a standard
+// browser will throw an error, preventing unexpected behavior.
+// @ts-ignore
+const vscode: VsCodeApi = acquireVsCodeApi();
 
-export const vscodeApi = api;
+export const vscodeApi = vscode;

@@ -1,18 +1,17 @@
-
-import { RequestHandler } from 'express';
-import { generateAnalysisStream } from '../services/geminiService';
+import { Request, Response, NextFunction } from 'express';
+import { generateModificationForFile } from '../services/geminiService';
 // FIX: Changed import path to point to the correct types file.
 import { AnalysisRequest } from '../types/index';
 import { jobManager } from '../services/jobManager';
 
-export const handleAnalysisRequest: RequestHandler = async (req, res, next) => {
+export const handleAnalysisRequest = async (req: Request, res: Response, next: NextFunction) => {
     const { prompt, files, jobId } = req.body as AnalysisRequest;
     
     const requestId = (req as any).id;
 
-    if (!prompt || !files || !Array.isArray(files)) {
-        console.error(`[${requestId}] Bad Request: Missing prompt or files.`);
-        return res.status(400).json({ error: 'Missing prompt or files' });
+    if (!prompt || !files || !Array.isArray(files) || files.length === 0) {
+        console.error(`[${requestId}] Bad Request: Missing prompt or the single file.`);
+        return res.status(400).json({ error: 'Missing prompt or file' });
     }
     
     if (!jobId) {
@@ -20,24 +19,17 @@ export const handleAnalysisRequest: RequestHandler = async (req, res, next) => {
         return res.status(400).json({ error: 'Missing jobId' });
     }
 
+    const singleFile = files[0];
     const signal = jobManager.create(jobId);
 
     try {
-        console.log(`[${requestId}] Received analysis request for job ${jobId} with ${files.length} files.`);
+        console.log(`[${requestId}] Received single-file analysis request for job ${jobId} on file ${singleFile.filePath}.`);
         
-        // Set headers for streaming
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Transfer-Encoding', 'chunked');
+        const result = await generateModificationForFile(prompt, singleFile, signal);
 
-        const analysisGenerator = generateAnalysisStream(prompt, files, signal);
-
-        for await (const result of analysisGenerator) {
-            res.write(JSON.stringify(result) + '\\n');
-        }
-
-        console.log(`[${requestId}] Analysis for job ${jobId} successful. Stream ended.`);
+        console.log(`[${requestId}] Analysis for job ${jobId} successful.`);
         jobManager.complete(jobId);
-        res.end();
+        res.status(200).json(result);
 
     } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {

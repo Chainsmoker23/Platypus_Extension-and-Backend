@@ -1,11 +1,8 @@
 
-import { RequestHandler } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
-// FIX: Change to a const of type RequestHandler to resolve type inference issues
-// with request and response objects, which fixes errors on properties like .on, .method, etc.
-// This also resolves the argument type error for app.use() in app.ts.
-export const loggingMiddleware: RequestHandler = (req, res, next) => {
+export const loggingMiddleware = (req: Request, res: Response, next: NextFunction) => {
   const requestId = uuidv4();
   // FIX: Removed @ts-ignore as the custom 'id' property is now defined in 'backend/src/types/express/index.d.ts'.
   req.id = requestId;
