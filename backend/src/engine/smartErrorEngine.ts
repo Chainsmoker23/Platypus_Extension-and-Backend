@@ -1,12 +1,8 @@
+
 import { GoogleGenAI, Type } from '@google/genai';
 import { createTwoFilesPatch } from 'diff';
 import { FileData, FileSystemOperation } from '../types/index';
-
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set");
-}
-
-const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
+import { withRotatingKey } from './apiKeyRotator';
 
 export async function resolveErrors(diagnostics: string[], files: FileData[]): Promise<FileSystemOperation[]> {
     if (!diagnostics || diagnostics.length === 0) return [];
@@ -32,9 +28,11 @@ export async function resolveErrors(diagnostics: string[], files: FileData[]): P
         const errorMsg = fileErrors.join('\n');
         
         // 3. Send to Gemini
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: `
+        await withRotatingKey(async (key) => {
+            const ai = new GoogleGenAI({apiKey: key});
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: `
 You are a senior engineer. This error happened:
 ${errorMsg}
 
@@ -47,41 +45,42 @@ Tell me the ROOT CAUSE and the ONE perfect fix.
 Rate confidence 1–10.
 Return JSON only.
 `,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        rootCause: { type: Type.STRING },
-                        fixedContent: { type: Type.STRING, description: "The fully corrected file content." },
-                        confidence: { type: Type.INTEGER },
-                        explanation: { type: Type.STRING }
-                    },
-                    required: ["rootCause", "fixedContent", "confidence", "explanation"]
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: {
+                            rootCause: { type: Type.STRING },
+                            fixedContent: { type: Type.STRING, description: "The fully corrected file content." },
+                            confidence: { type: Type.INTEGER },
+                            explanation: { type: Type.STRING }
+                        },
+                        required: ["rootCause", "fixedContent", "confidence", "explanation"]
+                    }
                 }
+            });
+
+            const result = JSON.parse(response.text || "{}");
+            
+            // 4. Generate Diff
+            if (result.fixedContent) {
+                const patch = createTwoFilesPatch(
+                    filePath,
+                    filePath,
+                    file.content,
+                    result.fixedContent,
+                    'Original',
+                    'Fixed'
+                );
+
+                operations.push({
+                    type: 'modify',
+                    filePath,
+                    diff: patch,
+                    explanation: `[Confidence: ${result.confidence}/10] ${result.rootCause}`
+                });
             }
         });
-
-        const result = JSON.parse(response.text || "{}");
-        
-        // 4. Generate Diff
-        if (result.fixedContent) {
-            const patch = createTwoFilesPatch(
-                filePath,
-                filePath,
-                file.content,
-                result.fixedContent,
-                'Original',
-                'Fixed'
-            );
-
-            operations.push({
-                type: 'modify',
-                filePath,
-                diff: patch,
-                explanation: `[Confidence: ${result.confidence}/10] ${result.rootCause}`
-            });
-        }
     }
 
     return operations;

@@ -1,16 +1,9 @@
 
-// FIX: Corrected the import path from '@google/ai/generativelace' to '@google/genai'.
 import { GoogleGenAI, Type } from '@google/genai';
 import { FileData, AnalysisResult } from '../types/index';
 import { validateOperations } from '../utils/diffValidator';
 import { createSystemInstruction } from './systemPrompt';
-
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set");
-}
-
-// FIX: Corrected GoogleGenAI initialization to use an options object with an apiKey property.
-const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
+import { withRotatingKey } from '../engine/apiKeyRotator';
 
 const analysisResultSchema = {
     type: Type.OBJECT,
@@ -63,7 +56,7 @@ export async function generateWorkspaceAnalysis(
     selectedFilePaths: string[] = [],
     onProgress?: (message: string) => void
 ): Promise<AnalysisResult> {
-    const model = 'gemini-1.5-flash-latest';
+    const model = 'gemini-2.5-flash';
 
     if (onProgress) {
         onProgress("Platypus is thinking...");
@@ -102,39 +95,42 @@ export async function generateWorkspaceAnalysis(
 
     try {
         if (onProgress) {
-            this.streamProgress("Designing clean architecture...");
+            onProgress("Designing clean architecture...");
         }
 
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: { parts: [{ text: systemInstruction }] },
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: analysisResultSchema,
-                temperature: 0.1,
-                maxOutputTokens: 2048,
-            },
+        return await withRotatingKey(async (key) => {
+            const ai = new GoogleGenAI({apiKey: key});
+            const response = await ai.models.generateContent({
+                model: model,
+                contents: { parts: [{ text: systemInstruction }] },
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: analysisResultSchema,
+                    temperature: 0.1,
+                    maxOutputTokens: 2048,
+                },
+            });
+
+            if (signal.aborted) {
+                throw new Error('Aborted');
+            }
+
+            const responseText = response.text;
+            if (!responseText) {
+                throw new Error("Received an empty response from the AI.");
+            }
+            
+            const result = JSON.parse(responseText);
+            validateOperations(result);
+
+            if (onProgress) {
+                const createCount = result.changes.filter((c: any) => c.type === 'create').length;
+                const modifyCount = result.changes.filter((c: any) => c.type === 'modify').length;
+                onProgress(`Ready — ${createCount} new files + ${modifyCount} modifications`);
+            }
+
+            return result;
         });
-
-        if (signal.aborted) {
-            throw new Error('Aborted');
-        }
-
-        const responseText = response.text;
-        if (!responseText) {
-            throw new Error("Received an empty response from the AI.");
-        }
-        
-        const result = JSON.parse(responseText);
-        validateOperations(result);
-
-        if (onProgress) {
-            const createCount = result.changes.filter((c: any) => c.type === 'create').length;
-            const modifyCount = result.changes.filter((c: any) => c.type === 'modify').length;
-            onProgress(`Ready — ${createCount} new files + ${modifyCount} modifications`);
-        }
-
-        return result;
 
     } catch (error) {
         if (error instanceof Error && error.message === 'Aborted') {
@@ -145,10 +141,4 @@ export async function generateWorkspaceAnalysis(
         console.error("Error calling Gemini API or validating response:", error);
         throw new Error("Failed to generate and validate analysis from Gemini API.");
     }
-}
-
-// Helper to access stream if needed (though onProgress is passed in)
-function streamProgress(message: string) {
-    // This function is kept for consistency with the prompt requirement, 
-    // but in this implementation, we use the onProgress callback passed to the function.
 }

@@ -1,11 +1,7 @@
+
 import { GoogleGenAI } from '@google/genai';
 import { FileData } from '../types/index';
-
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set");
-}
-
-const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
+import { withRotatingKey } from './apiKeyRotator';
 
 const BEAUTY_PROMPT = `
 You are the world's best frontend designer.
@@ -25,22 +21,25 @@ Transform this component:
 `;
 
 export async function makeItBeautiful(file: FileData): Promise<{ filePath: string; content: string }> {
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: `${BEAUTY_PROMPT}\n\n\`\`\`tsx\n${file.content}\n\`\`\``,
-    config: {
-      temperature: 0.2,
-      maxOutputTokens: 8192,
-      responseMimeType: "text/plain"
-    }
+  return withRotatingKey(async (key) => {
+    const ai = new GoogleGenAI({apiKey: key});
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `${BEAUTY_PROMPT}\n\n\`\`\`tsx\n${file.content}\n\`\`\``,
+        config: {
+        temperature: 0.2,
+        maxOutputTokens: 8192,
+        responseMimeType: "text/plain"
+        }
+    });
+
+    const text = response.text || "";
+    // Strip markdown code blocks if present
+    const cleanContent = text.replace(/^```(tsx|jsx|javascript|typescript)?\n/i, '').replace(/\n```$/, '');
+
+    return {
+        filePath: file.filePath,
+        content: cleanContent.trim()
+    };
   });
-
-  const text = response.text || "";
-  // Strip markdown code blocks if present
-  const cleanContent = text.replace(/^```(tsx|jsx|javascript|typescript)?\n/i, '').replace(/\n```$/, '');
-
-  return {
-    filePath: file.filePath,
-    content: cleanContent.trim()
-  };
 }
