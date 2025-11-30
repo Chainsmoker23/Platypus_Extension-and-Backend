@@ -8,7 +8,8 @@ async function verifyFileChecksum(filePath: string, workspaceRoot: vscode.Uri, o
     const fileUri = vscode.Uri.file(path.join(workspaceRoot.fsPath, filePath));
     try {
         const contentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
-        const currentContent = Buffer.from(contentBytes).toString('utf-8');
+        // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' for cross-platform compatibility.
+        const currentContent = new TextDecoder().decode(contentBytes);
         const currentChecksum = calculateChecksum(currentContent);
         const originalChecksum = originalChecksums.get(filePath);
 
@@ -49,7 +50,8 @@ export async function applyChanges(operationsToApply: FileSystemOperation[], ori
                 if (typeof op.content !== 'string') {
                     throw new Error(`Invalid 'create' operation for ${op.filePath}: content is missing.`);
                 }
-                const newFileContent = Buffer.from(op.content, 'utf-8');
+                // FIX: Replaced Node.js 'Buffer' with 'TextEncoder' to create a Uint8Array for the new file content.
+                const newFileContent = new TextEncoder().encode(op.content);
                 workspaceEdit.createFile(fileUri, { ignoreIfExists: false, contents: newFileContent });
                 break;
             }
@@ -62,7 +64,8 @@ export async function applyChanges(operationsToApply: FileSystemOperation[], ori
                     throw new Error(`Invalid 'modify' operation for ${op.filePath}: diff is missing.`);
                 }
                 const originalContentBytes = await vscode.workspace.fs.readFile(fileUri);
-                const originalContent = Buffer.from(originalContentBytes).toString('utf-8');
+                // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' for cross-platform compatibility.
+                const originalContent = new TextDecoder().decode(originalContentBytes);
 
                 const newContent = diff.applyPatch(originalContent, op.diff);
                 if (newContent === false) {

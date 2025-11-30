@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { ChatInterface } from './components/ChatInterface';
 import Header from './components/Header';
@@ -20,6 +21,13 @@ const App: React.FC = () => {
         const messagePayload = message.payload as ChatMessage;
         setConversation(prev => [...prev, messagePayload]);
         break;
+      case 'progress-update':
+        setConversation(prev => prev.map(msg => 
+            msg.isLoading 
+            ? { ...msg, progressLogs: [...(msg.progressLogs || []), message.payload.message] }
+            : msg
+        ));
+        break;
       case 'analysis-complete': {
         const { reasoning, changes, jobId } = message.payload as { reasoning: string; changes: FileSystemOperation[]; jobId: string; };
         setConversation(prev => 
@@ -31,7 +39,8 @@ const App: React.FC = () => {
                     content: reasoning, 
                     changes: changes,
                     jobId: jobId,
-                    isLoading: false
+                    isLoading: false,
+                    progressLogs: [...(msg.progressLogs || []), `Ready — ${changes.length} changes`]
                   } 
                 : msg
             )
@@ -73,16 +82,25 @@ const App: React.FC = () => {
         id: `ai-loading-${Date.now()}`, 
         role: 'ai', 
         content: 'Platypus is thinking...', 
-        isLoading: true 
+        isLoading: true,
+        progressLogs: []
     };
 
     setConversation(prev => [...prev, userMessage, loadingMessage]);
     vscodeApi.postMessage({ command: 'submit-prompt', payload: { prompt, selectedFiles: files } });
     setSelectedFiles([]); // Clear selection after submit
   }, []);
+
+  const handleCancelChanges = (messageId: string) => {
+    setConversation(prev => prev.map(msg => 
+        msg.id === messageId 
+        ? { ...msg, changes: undefined } 
+        : msg
+    ));
+  };
   
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-gray-200 font-sans">
+    <div className="flex flex-col h-screen bg-copilot-bg text-copilot-text font-sans selection:bg-copilot-blue selection:text-white">
        <Header />
        {error && <ErrorDisplay error={error} onDismiss={() => setError(null)} />}
         <ChatInterface 
@@ -92,6 +110,7 @@ const App: React.FC = () => {
             statusText={statusText}
             selectedFiles={selectedFiles}
             setSelectedFiles={setSelectedFiles}
+            onCancelChanges={handleCancelChanges}
         />
     </div>
   );

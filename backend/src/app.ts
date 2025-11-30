@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import { analyzeRouter } from './routes/analyzeRoutes';
@@ -10,11 +9,12 @@ import { errorHandler } from './middlewares/errorHandler';
 const app = express();
 
 // Core Middlewares
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(cors() as any);
+app.use(express.json({ limit: '50mb' }) as any);
 
 // Custom Middlewares
-app.use(loggingMiddleware);
+// FIX: Cast loggingMiddleware to any to avoid type mismatch issues with Express RequestHandler
+app.use(loggingMiddleware as any);
 
 // API Routes
 app.get('/', (req, res) => {

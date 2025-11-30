@@ -18,7 +18,8 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
 
     if (err.name === 'AbortError') {
         console.log(`[${requestId}] Request aborted: ${err.message}`);
-        return res.status(499).json({
+        // FIX: Cast res to any to access status
+        return (res as any).status(499).json({
             code: 'request/aborted',
             message: 'The analysis request was cancelled by the client.',
         });
@@ -26,7 +27,8 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
 
     if (isApiError(err)) {
         console.error(`[${requestId}] API Error: ${err.code} - ${err.message}`, err.details || '');
-        return res.status(err.statusCode).json({
+        // FIX: Cast res to any to access status
+        return (res as any).status(err.statusCode).json({
             code: err.code,
             message: err.message,
             details: err.details,
@@ -34,7 +36,8 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
     }
 
     console.error(`[${requestId}] Unhandled Error:`, err);
-    return res.status(500).json({
+    // FIX: Cast res to any to access status
+    return (res as any).status(500).json({
         code: 'internal/unknown_error',
         message: 'An unexpected internal server error occurred.',
         details: err.message,

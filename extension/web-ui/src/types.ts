@@ -1,3 +1,4 @@
+
 // This file defines the shared data structures (API contract) between the webview and the extension.
 
 export interface FileSystemOperation {
@@ -16,6 +17,7 @@ export interface ChatMessage {
   jobId?: string;
   isLoading?: boolean;
   changes?: FileSystemOperation[];
+  progressLogs?: string[];
 }
 
 // A unified message type for communication between the webview and the extension.
@@ -27,13 +29,15 @@ export interface PlatypusMessage {
       'cancel-analysis' |
       'apply-changes' |
       'attach-files' |
+      'preview-changes' |
       // Extension -> Webview
       'chat-update' |
       'analysis-complete' |
       'set-loading' |
       'error' |
       'update-status' |
-      'update-selected-files';
+      'update-selected-files' |
+      'progress-update';
     payload?: any;
 }
 

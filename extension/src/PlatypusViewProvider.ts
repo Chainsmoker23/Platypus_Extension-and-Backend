@@ -1,9 +1,13 @@
+
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
+// FIX: Added 'path' import to replace 'process.platform' for determining path separators.
+import * as path from 'path';
 import { calculateChecksum } from './utils/workspaceUtils';
 import { callBackend, cancelBackendJob } from './utils/backendApi';
 import type { FileData } from './utils/backendApi';
 import { AnalysisResult, FileSystemOperation } from './types';
+import { checkLocalBrain } from './services/localBrain';
 
 
 export class PlatypusViewProvider implements vscode.WebviewViewProvider {
@@ -56,7 +60,8 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
         });
       
         if (uris) {
-          const root = workspaceFolder.uri.fsPath + (process.platform === 'win32' ? '\\' : '/');
+          // FIX: Replaced 'process.platform' with 'path.sep' for a more robust, cross-platform way to handle file paths.
+          const root = workspaceFolder.uri.fsPath + path.sep;
           const paths = uris.map(u => u.fsPath.replace(root, '').replace(/\\/g, '/')).filter(p => p);
           this._view?.webview.postMessage({ command: 'update-selected-files', payload: paths });
         }
@@ -112,6 +117,59 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
             case 'submit-prompt':
                 await this.handleAnalysisRequest(message.payload);
                 break;
+            case 'preview-changes': {
+                if (!this.workspaceRoot) return;
+                const changes = message.payload;
+              
+                for (const change of changes as FileSystemOperation[]) {
+                  const uri = vscode.Uri.joinPath(vscode.Uri.file(this.workspaceRoot), change.filePath);
+              
+                  if (change.type === 'create') {
+                    // For create, we show the new file content. 
+                    // To show a "Diff", we can diff against the empty file (which technically doesn't exist on disk).
+                    // Or we just open the Untitled file with content.
+                    const newUri = vscode.Uri.parse(`untitled:${change.filePath}`);
+                    const doc = await vscode.workspace.openTextDocument(newUri);
+                    const editor = await vscode.window.showTextDocument(doc, { preview: true });
+                    await editor.edit(edit => {
+                        edit.insert(new vscode.Position(0, 0), change.content || '');
+                    });
+                    
+                    // Optional: Show diff against current (non-existent) to highlight it's new
+                    // But showing the file is usually enough for 'create'.
+                    // The prompt asked for "beautiful native VS Code diff tabs", so let's try to trigger a diff if possible
+                    // But diffing against a non-existent file on disk often just shows empty vs content.
+                    vscode.commands.executeCommand('vscode.diff', uri, newUri, `${change.filePath} (New File)`);
+                  }
+                  else if (change.type === 'modify' && change.diff) {
+                    let currentContent = '';
+                    try {
+                        const buffer = await vscode.workspace.fs.readFile(uri);
+                        currentContent = new TextDecoder().decode(buffer);
+                    } catch (e) { }
+
+                    // Apply the patch to get the "New" content
+                    const newContent = this.applyPatch(currentContent, change.diff);
+                    
+                    if (newContent !== null) {
+                        const leftUri = uri; // Original file on disk
+                        const rightUri = uri.with({ scheme: 'untitled', query: 'preview' }); // New content
+                        
+                        const doc = await vscode.workspace.openTextDocument(rightUri);
+                        const edit = new vscode.WorkspaceEdit();
+                        edit.insert(rightUri, new vscode.Position(0, 0), newContent);
+                        await vscode.workspace.applyEdit(edit);
+            
+                        vscode.commands.executeCommand('vscode.diff', 
+                            leftUri, 
+                            rightUri, 
+                            `${change.filePath} (Preview)`
+                        );
+                    }
+                  }
+                }
+                break;
+            }
             case 'apply-changes': {
                 if (!this.workspaceRoot) {
                     vscode.window.showErrorMessage("Cannot apply changes without an open workspace.");
@@ -133,7 +191,8 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                         let currentContent = '';
                         try {
                           const buffer = await vscode.workspace.fs.readFile(uri);
-                          currentContent = Buffer.from(buffer).toString('utf8');
+                          // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' to safely convert Uint8Array to string.
+                          currentContent = new TextDecoder().decode(buffer);
                         } catch (err) {
                           // File doesn't exist yet (common for 'create' operations) → safe to ignore
                           currentContent = '';
@@ -170,6 +229,17 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
     private async handleAnalysisRequest(payload: { prompt: string; selectedFiles: string[] }) {
         if (!this._view) return;
 
+        // Ticket #1: Local Brain check - Instant Greeting
+        const localResponse = checkLocalBrain(payload.prompt);
+        if (localResponse) {
+             this.postMessage('analysis-complete', {
+                reasoning: localResponse.reasoning,
+                changes: localResponse.changes,
+                jobId: 'local-brain'
+            });
+            return;
+        }
+
         this.postMessage('set-loading', true);
         this.postMessage('update-status', { text: `Indexing workspace and analyzing request...` });
 
@@ -189,12 +259,21 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
             for (const fileUri of allFiles) {
                 const relativePath = vscode.workspace.asRelativePath(fileUri);
                 const contentBytes = await vscode.workspace.fs.readFile(fileUri);
-                const content = Buffer.from(contentBytes).toString('utf-8');
+                // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' for cross-platform compatibility when reading file content.
+                const content = new TextDecoder().decode(contentBytes);
                 const checksum = calculateChecksum(content);
                 fileDataForBackend.push({ filePath: relativePath, content, checksum });
             }
             
-            const result: AnalysisResult = await callBackend(payload.prompt, fileDataForBackend, this._activeJobId, payload.selectedFiles);
+            const result: AnalysisResult = await callBackend(
+                payload.prompt, 
+                fileDataForBackend, 
+                this._activeJobId, 
+                payload.selectedFiles,
+                (progressMsg) => {
+                    this.postMessage('progress-update', { message: progressMsg });
+                }
+            );
             
             this.postMessage('analysis-complete', {
                 reasoning: result.reasoning,

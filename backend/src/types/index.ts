@@ -1,3 +1,4 @@
+
 export interface FileData {
     filePath: string;
     content: string;
@@ -9,6 +10,7 @@ export interface AnalysisRequest {
     files: FileData[];
     jobId: string;
     selectedFilePaths?: string[];
+    diagnostics?: string[];
 }
 
 export interface FileSystemOperation {
