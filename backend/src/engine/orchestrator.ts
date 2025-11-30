@@ -1,7 +1,7 @@
 import { createTwoFilesPatch } from 'diff';
 import { FileData, AnalysisResult, FileSystemOperation } from '../types/index';
 import { generateIntents } from './intentEngine';
-import { generateErrorFixes } from './errorFixEngine';
+import { resolveErrors } from './smartErrorEngine';
 import { getContextForTask } from './contextEngine';
 import { executeTask } from './executionEngine';
 import { validateChange } from './validationEngine';
@@ -67,19 +67,29 @@ export async function generateWorkspaceAnalysis(
 
     if (onProgress) onProgress("Orchestrating plan...");
 
-    // 1. Intent Phase
+    // 1. Check for "Fix" Request
+    const isFixRequest = diagnostics && diagnostics.length > 0 && 
+                        (prompt.toLowerCase().includes('fix') || prompt.toLowerCase().includes('error') || prompt.toLowerCase().includes('bug'));
+    
+    if (isFixRequest) {
+        if (onProgress) onProgress("Running God-tier error analysis...");
+        try {
+            const changes = await resolveErrors(diagnostics!, files);
+            if (onProgress) onProgress("Root cause identified. Fix ready.");
+            return {
+                reasoning: "Smart Error Engine resolved diagnostics with high confidence.",
+                changes: changes
+            };
+        } catch (e) {
+            console.error("Smart error fix failed", e);
+            // Fallback to normal intent generation if smart fix fails
+        }
+    }
+
+    // 2. Standard Intent Phase
     let intents: string[] = [];
     try {
-        // Switch strategy: If diagnostics are provided and prompt suggests fixing, use Error Engine
-        const isFixRequest = diagnostics && diagnostics.length > 0 && 
-                            (prompt.toLowerCase().includes('fix') || prompt.toLowerCase().includes('error') || prompt.toLowerCase().includes('bug'));
-        
-        if (isFixRequest) {
-            if (onProgress) onProgress("Analyzing error logs...");
-            intents = await generateErrorFixes(diagnostics!, files);
-        } else {
-            intents = await generateIntents(prompt, files);
-        }
+        intents = await generateIntents(prompt, files);
     } catch (e) {
         console.error("Intent generation failed", e);
         throw new Error("Failed to understand request.");
@@ -91,7 +101,7 @@ export async function generateWorkspaceAnalysis(
     const changes: FileSystemOperation[] = [];
     const completedTasks: string[] = [];
 
-    // 2. Execution Loop
+    // 3. Execution Loop
     for (let i = 0; i < intents.length; i++) {
         const task = intents[i];
         if (signal.aborted) throw new Error("Aborted");
