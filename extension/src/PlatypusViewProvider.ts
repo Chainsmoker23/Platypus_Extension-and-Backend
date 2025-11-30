@@ -10,9 +10,9 @@ import { AnalysisResult, FileSystemOperation } from './types';
 import { checkLocalBrain } from './services/localBrain';
 
 
-export class PlatypusViewProvider implements vscode.WebviewViewProvider {
+export class PlatypusViewProvider {
 
-	private _view?: vscode.WebviewView;
+	private _view?: any;
     private _disposables: vscode.Disposable[] = [];
     private _activeJobId: string | null = null;
     private readonly workspaceRoot: string | undefined = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -22,15 +22,15 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
 	) { }
 
 	public resolveWebviewView(
-		webviewView: vscode.WebviewView,
-		context: vscode.WebviewViewResolveContext,
+		webviewView: any,
+		context: any,
 		_token: vscode.CancellationToken,
 	) {
 		this._view = webviewView;
 
 		webviewView.webview.options = {
 			enableScripts: true,
-			localResourceRoots: [vscode.Uri.joinPath(this._extensionUri, 'web-ui', 'dist')]
+			localResourceRoots: [vscode.Uri.file(path.join(this._extensionUri.fsPath, 'web-ui', 'dist'))]
 		};
 
 		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
@@ -50,20 +50,91 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
           vscode.window.showErrorMessage("No workspace open");
           return;
         }
-      
-        const uris = await vscode.window.showOpenDialog({
-          canSelectFiles: true,
-          canSelectFolders: true,
-          canSelectMany: true,
-          defaultUri: workspaceFolder.uri,
-          title: "Select files/folders (only inside this project)",
-        });
-      
-        if (uris) {
-          // FIX: Replaced 'process.platform' with 'path.sep' for a more robust, cross-platform way to handle file paths.
-          const root = workspaceFolder.uri.fsPath + path.sep;
-          const paths = uris.map(u => u.fsPath.replace(root, '').replace(/\\/g, '/')).filter(p => p);
-          this._view?.webview.postMessage({ command: 'update-selected-files', payload: paths });
+
+        const status = vscode.window.setStatusBarMessage("Platypus: Indexing files...");
+        
+        try {
+            // 1. Get all files in workspace (respecting gitignore)
+            const uris = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out,venv,.next,.vscode,coverage}/**');
+            
+            // 2. Map to QuickPick items
+            const items: vscode.QuickPickItem[] = uris.map(uri => {
+                const relativePath = vscode.workspace.asRelativePath(uri);
+                return {
+                    label: `$(file) ${path.basename(uri.fsPath)}`,
+                    description: path.dirname(relativePath) === '.' ? '' : path.dirname(relativePath),
+                    detail: relativePath // Store the full relative path to identify the file later
+                };
+            });
+
+            // 3. Show QuickPick (Cmd+P style)
+            const selected = await vscode.window.showQuickPick(items, {
+                canPickMany: true,
+                placeHolder: 'Search files to add to context...',
+                matchOnDescription: true,
+                matchOnDetail: true
+            });
+
+            if (selected) {
+                // 4. Send back to WebUI
+                const paths = selected.map(item => item.detail || '');
+                this._view?.webview.postMessage({ command: 'update-selected-files', payload: paths });
+            }
+        } catch (e) {
+            console.error("Error attaching files:", e);
+            vscode.window.showErrorMessage("Failed to load file picker.");
+        } finally {
+            status.dispose();
+        }
+    };
+
+    private handlePickFolder = async () => {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showErrorMessage("No workspace open");
+            return;
+        }
+
+        const status = vscode.window.setStatusBarMessage("Platypus: Indexing folders...");
+        try {
+            const uris = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out,venv,.next,.vscode,coverage}/**');
+            
+            // Extract unique directories
+            const dirs = new Set<string>();
+            uris.forEach(uri => {
+                const relativePath = vscode.workspace.asRelativePath(uri);
+                const dirname = path.dirname(relativePath);
+                if (dirname !== '.') {
+                    dirs.add(dirname);
+                }
+            });
+
+            const items: vscode.QuickPickItem[] = Array.from(dirs).sort().map(dir => ({
+                label: `$(folder) ${dir}`,
+                detail: dir
+            }));
+
+            const selected = await vscode.window.showQuickPick(items, {
+                canPickMany: true,
+                placeHolder: 'Select folders to add all their files...',
+                matchOnDetail: true
+            });
+
+            if (selected) {
+                const selectedDirs = selected.map(s => s.detail!);
+                // Find all files that start with these directories
+                const filesToAdd = uris
+                    .map(uri => vscode.workspace.asRelativePath(uri))
+                    .filter(path => selectedDirs.some(dir => path.startsWith(dir + '/')));
+                
+                this.postMessage('update-selected-files', filesToAdd);
+            }
+
+        } catch (e) {
+            console.error("Error picking folder:", e);
+            vscode.window.showErrorMessage("Failed to load folder picker.");
+        } finally {
+            status.dispose();
         }
     };
 
@@ -114,6 +185,10 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                 this.handleAttachFiles();
                 break;
             }
+            case 'pick-folder': {
+                this.handlePickFolder();
+                break;
+            }
             case 'submit-prompt':
                 await this.handleAnalysisRequest(message.payload);
                 break;
@@ -122,7 +197,7 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                 const changes = message.payload;
               
                 for (const change of changes as FileSystemOperation[]) {
-                  const uri = vscode.Uri.joinPath(vscode.Uri.file(this.workspaceRoot), change.filePath);
+                  const uri = vscode.Uri.file(path.join(this.workspaceRoot, change.filePath));
               
                   if (change.type === 'create') {
                     // For create, we show the new file content. 
@@ -144,7 +219,7 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                   else if (change.type === 'modify' && change.diff) {
                     let currentContent = '';
                     try {
-                        const buffer = await vscode.workspace.fs.readFile(uri);
+                        const buffer = await (vscode.workspace as any).fs.readFile(uri);
                         currentContent = new TextDecoder().decode(buffer);
                     } catch (e) { }
 
@@ -180,7 +255,7 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                 const applyEdit = new vscode.WorkspaceEdit();
               
                 for (const change of changes as FileSystemOperation[]) {
-                  const uri = vscode.Uri.joinPath(vscode.Uri.file(this.workspaceRoot), change.filePath);
+                  const uri = vscode.Uri.file(path.join(this.workspaceRoot, change.filePath));
               
                   if (change.type === 'create') {
                     applyEdit.createFile(uri, { overwrite: false, ignoreIfExists: true });
@@ -190,7 +265,7 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                     try {
                         let currentContent = '';
                         try {
-                          const buffer = await vscode.workspace.fs.readFile(uri);
+                          const buffer = await (vscode.workspace as any).fs.readFile(uri);
                           // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' to safely convert Uint8Array to string.
                           currentContent = new TextDecoder().decode(buffer);
                         } catch (err) {
@@ -199,7 +274,7 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                         }
                         const newContent = this.applyPatch(currentContent, change.diff);
                         if (newContent !== null) {
-                            const stats = await vscode.workspace.fs.stat(uri);
+                            const stats = await (vscode.workspace as any).fs.stat(uri);
                             const fullRange = new vscode.Range(0, 0, stats.size, 0); // Approximate full range
                             applyEdit.replace(uri, fullRange, newContent);
                         } else {
@@ -224,6 +299,34 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
                 await this.handleCancelRequest();
                 break;
         }
+    }
+
+    private getWorkspaceDiagnostics(): string[] {
+        const diagnostics: string[] = [];
+        const allDiagnostics = vscode.languages.getDiagnostics();
+        
+        for (const [uri, diags] of allDiagnostics) {
+             if (diags.length === 0) continue;
+             
+             // Only include errors and warnings (exclude info/hints to reduce noise)
+             const errorsAndWarnings = diags.filter(d => 
+                 d.severity === vscode.DiagnosticSeverity.Error || 
+                 d.severity === vscode.DiagnosticSeverity.Warning
+             );
+
+             if (errorsAndWarnings.length === 0) continue;
+
+             const relativePath = vscode.workspace.asRelativePath(uri);
+             
+             for (const diag of errorsAndWarnings) {
+                 const severity = diag.severity === vscode.DiagnosticSeverity.Error ? 'Error' : 'Warning';
+                 const line = diag.range.start.line + 1;
+                 // Format: [Severity] in [File] at line [Line]: [Message]
+                 // This format is parsed by smartErrorEngine (which expects file path in the string)
+                 diagnostics.push(`${severity} in ${relativePath} at line ${line}: ${diag.message}`);
+             }
+        }
+        return diagnostics;
     }
 
     private async handleAnalysisRequest(payload: { prompt: string; selectedFiles: string[] }) {
@@ -258,18 +361,22 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
             const fileDataForBackend: FileData[] = [];
             for (const fileUri of allFiles) {
                 const relativePath = vscode.workspace.asRelativePath(fileUri);
-                const contentBytes = await vscode.workspace.fs.readFile(fileUri);
+                const contentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
                 // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' for cross-platform compatibility when reading file content.
                 const content = new TextDecoder().decode(contentBytes);
                 const checksum = calculateChecksum(content);
                 fileDataForBackend.push({ filePath: relativePath, content, checksum });
             }
             
+            // Gather diagnostics to send to backend for error fixing
+            const diagnostics = this.getWorkspaceDiagnostics();
+
             const result: AnalysisResult = await callBackend(
                 payload.prompt, 
                 fileDataForBackend, 
                 this._activeJobId, 
                 payload.selectedFiles,
+                diagnostics,
                 (progressMsg) => {
                     this.postMessage('progress-update', { message: progressMsg });
                 }
@@ -324,9 +431,9 @@ export class PlatypusViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-	private _getHtmlForWebview(webview: vscode.Webview) {
-		const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'web-ui', 'dist', 'assets', 'index.js'));
-		const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'web-ui', 'dist', 'assets', 'index.css'));
+	private _getHtmlForWebview(webview: any) {
+		const scriptUri = webview.asWebviewUri(vscode.Uri.file(path.join(this._extensionUri.fsPath, 'web-ui', 'dist', 'assets', 'index.js')));
+		const stylesUri = webview.asWebviewUri(vscode.Uri.file(path.join(this._extensionUri.fsPath, 'web-ui', 'dist', 'assets', 'index.css')));
 		const nonce = getNonce();
 
 		return `<!DOCTYPE html>

@@ -15,6 +15,7 @@ export async function callBackend(
     files: FileData[], 
     jobId: string, 
     selectedFilePaths: string[],
+    diagnostics: string[],
     onProgress?: (message: string) => void
 ): Promise<AnalysisResult> {
     console.log(`Calling backend for job ${jobId} with prompt and ${files.length} file(s)...`);
@@ -22,7 +23,7 @@ export async function callBackend(
         const response = await fetch(`${BACKEND_URL}/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, files, jobId, selectedFilePaths }),
+            body: JSON.stringify({ prompt, files, jobId, selectedFilePaths, diagnostics }),
         });
 
         if (!response.ok) {

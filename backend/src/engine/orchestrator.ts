@@ -1,3 +1,4 @@
+
 import { createTwoFilesPatch } from 'diff';
 import { FileData, AnalysisResult, FileSystemOperation } from '../types/index';
 import { generateIntents } from './intentEngine';
@@ -17,28 +18,24 @@ export async function generateWorkspaceAnalysis(
 ): Promise<AnalysisResult> {
     
     // SPECIAL MODE: "Make it Beautiful"
-    if (prompt.toLowerCase().includes("make it beautiful") ||
+    if (selectedFilePaths.length > 0 && (
+        prompt.toLowerCase().includes("make it beautiful") ||
         prompt.toLowerCase().includes("beautify") ||
         prompt.toLowerCase().includes("make pretty") ||
-        prompt.toLowerCase().includes("make it nice") ||
-        prompt.toLowerCase().includes("use shadcn")) {
+        prompt.toLowerCase().includes("make it nice")
+    )) {
 
         if (onProgress) onProgress("Turning your component into a Shadcn/Tailwind masterpiece...");
         
-        const targetFile = files.find(f => 
-            selectedFilePaths.length > 0 
-            ? selectedFilePaths.some(p => f.filePath.includes(p))
-            : f.filePath.includes(".tsx") || f.filePath.includes(".jsx")
-        );
+        const targetFile = files.find(f => selectedFilePaths.some(p => f.filePath.includes(p)));
 
         if (!targetFile) {
-            return { reasoning: "Please select or open a React component first.", changes: [] };
+            return { reasoning: "Could not find the content of the selected file to beautify.", changes: [] };
         }
 
         try {
             const result = await makeItBeautiful(targetFile);
             
-            // Generate a diff because 'modify' operations require it
             const patch = createTwoFilesPatch(
                 targetFile.filePath, 
                 targetFile.filePath, 
@@ -82,7 +79,6 @@ export async function generateWorkspaceAnalysis(
             };
         } catch (e) {
             console.error("Smart error fix failed", e);
-            // Fallback to normal intent generation if smart fix fails
         }
     }
 
@@ -108,8 +104,9 @@ export async function generateWorkspaceAnalysis(
 
         if (onProgress) onProgress(`Running subtask ${i + 1}/${intents.length}: ${task}`);
 
-        // Context Phase
-        const context = getContextForTask(task, files, selectedFilePaths);
+        // Context Phase (Now Async with Deep Embedding)
+        // We now await the deep embedding context retrieval
+        const context = await getContextForTask(task, files, selectedFilePaths);
 
         // Execution Phase
         let op: FileSystemOperation | null = null;
@@ -117,7 +114,7 @@ export async function generateWorkspaceAnalysis(
             op = await executeTask(task, context);
         } catch (e) {
             console.error(`Task failed: ${task}`, e);
-            continue; // Skip failed subtasks to keep going
+            continue;
         }
 
         // Validation Phase

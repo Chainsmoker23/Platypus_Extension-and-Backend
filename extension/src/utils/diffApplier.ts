@@ -50,9 +50,8 @@ export async function applyChanges(operationsToApply: FileSystemOperation[], ori
                 if (typeof op.content !== 'string') {
                     throw new Error(`Invalid 'create' operation for ${op.filePath}: content is missing.`);
                 }
-                // FIX: Replaced Node.js 'Buffer' with 'TextEncoder' to create a Uint8Array for the new file content.
-                const newFileContent = new TextEncoder().encode(op.content);
-                workspaceEdit.createFile(fileUri, { ignoreIfExists: false, contents: newFileContent });
+                workspaceEdit.createFile(fileUri, { ignoreIfExists: false });
+                workspaceEdit.insert(fileUri, new vscode.Position(0, 0), op.content);
                 break;
             }
             case 'delete': {
@@ -63,7 +62,7 @@ export async function applyChanges(operationsToApply: FileSystemOperation[], ori
                 if (typeof op.diff !== 'string') {
                     throw new Error(`Invalid 'modify' operation for ${op.filePath}: diff is missing.`);
                 }
-                const originalContentBytes = await vscode.workspace.fs.readFile(fileUri);
+                const originalContentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
                 // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' for cross-platform compatibility.
                 const originalContent = new TextDecoder().decode(originalContentBytes);
 
