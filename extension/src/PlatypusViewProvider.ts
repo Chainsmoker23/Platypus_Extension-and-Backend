@@ -1,13 +1,14 @@
 
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-// FIX: Added 'path' import to replace 'process.platform' for determining path separators.
 import * as path from 'path';
+import * as Diff from 'diff';
 import { calculateChecksum } from './utils/workspaceUtils';
 import { callBackend, cancelBackendJob } from './utils/backendApi';
 import type { FileData } from './utils/backendApi';
 import { AnalysisResult, FileSystemOperation } from './types';
 import { checkLocalBrain } from './services/localBrain';
+import { applyChanges } from './utils/diffApplier';
 
 
 export class PlatypusViewProvider {
@@ -15,6 +16,7 @@ export class PlatypusViewProvider {
 	private _view?: any;
     private _disposables: vscode.Disposable[] = [];
     private _activeJobId: string | null = null;
+    private _jobChecksums = new Map<string, string>();
     private readonly workspaceRoot: string | undefined = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
 	constructor(
@@ -138,37 +140,6 @@ export class PlatypusViewProvider {
         }
     };
 
-    private applyPatch(original: string, patch: string): string | null {
-        try {
-          const lines = original.split('\n');
-          const patchLines = patch.split('\n');
-          let result: string[] = [];
-      
-          let i = 0;
-          for (const line of patchLines) {
-            if (line.startsWith('@@')) {
-              const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-              if (match) {
-                const targetLine = parseInt(match[1]) - 1;
-                while (i < targetLine && i < lines.length) {
-                  result.push(lines[i++]);
-                }
-              }
-            } else if (line.startsWith('+')) {
-              result.push(line.slice(1));
-            } else if (!line.startsWith('-') && !line.startsWith('\\')) {
-              result.push(line);
-              i++;
-            }
-          }
-          while (i < lines.length) result.push(lines[i++]);
-          return result.join('\n');
-        } catch(e) {
-          console.error("Error applying patch:", e);
-          return null;
-        }
-    }
-
     private async handleMessage(message: any) {
         if (!this._view) return;
 
@@ -200,9 +171,6 @@ export class PlatypusViewProvider {
                   const uri = vscode.Uri.file(path.join(this.workspaceRoot, change.filePath));
               
                   if (change.type === 'create') {
-                    // For create, we show the new file content. 
-                    // To show a "Diff", we can diff against the empty file (which technically doesn't exist on disk).
-                    // Or we just open the Untitled file with content.
                     const newUri = vscode.Uri.parse(`untitled:${change.filePath}`);
                     const doc = await vscode.workspace.openTextDocument(newUri);
                     const editor = await vscode.window.showTextDocument(doc, { preview: true });
@@ -210,10 +178,6 @@ export class PlatypusViewProvider {
                         edit.insert(new vscode.Position(0, 0), change.content || '');
                     });
                     
-                    // Optional: Show diff against current (non-existent) to highlight it's new
-                    // But showing the file is usually enough for 'create'.
-                    // The prompt asked for "beautiful native VS Code diff tabs", so let's try to trigger a diff if possible
-                    // But diffing against a non-existent file on disk often just shows empty vs content.
                     vscode.commands.executeCommand('vscode.diff', uri, newUri, `${change.filePath} (New File)`);
                   }
                   else if (change.type === 'modify' && change.diff) {
@@ -223,10 +187,10 @@ export class PlatypusViewProvider {
                         currentContent = new TextDecoder().decode(buffer);
                     } catch (e) { }
 
-                    // Apply the patch to get the "New" content
-                    const newContent = this.applyPatch(currentContent, change.diff);
+                    // Use robust Diff library instead of manual regex
+                    const newContent = Diff.applyPatch(currentContent, change.diff);
                     
-                    if (newContent !== null) {
+                    if (typeof newContent === 'string') {
                         const leftUri = uri; // Original file on disk
                         const rightUri = uri.with({ scheme: 'untitled', query: 'preview' }); // New content
                         
@@ -240,6 +204,8 @@ export class PlatypusViewProvider {
                             rightUri, 
                             `${change.filePath} (Preview)`
                         );
+                    } else {
+                        vscode.window.showErrorMessage(`Could not preview changes for ${change.filePath}. The diff may be invalid.`);
                     }
                   }
                 }
@@ -252,47 +218,14 @@ export class PlatypusViewProvider {
                 }
                 const { changes } = message.payload;
                 
-                const applyEdit = new vscode.WorkspaceEdit();
-              
-                for (const change of changes as FileSystemOperation[]) {
-                  const uri = vscode.Uri.file(path.join(this.workspaceRoot, change.filePath));
-              
-                  if (change.type === 'create') {
-                    applyEdit.createFile(uri, { overwrite: false, ignoreIfExists: true });
-                    applyEdit.replace(uri, new vscode.Range(0, 0, 0, 0), change.content || '');
-                  } 
-                  else if (change.type === 'modify' && change.diff) {
-                    try {
-                        let currentContent = '';
-                        try {
-                          const buffer = await (vscode.workspace as any).fs.readFile(uri);
-                          // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' to safely convert Uint8Array to string.
-                          currentContent = new TextDecoder().decode(buffer);
-                        } catch (err) {
-                          // File doesn't exist yet (common for 'create' operations) → safe to ignore
-                          currentContent = '';
-                        }
-                        const newContent = this.applyPatch(currentContent, change.diff);
-                        if (newContent !== null) {
-                            const stats = await (vscode.workspace as any).fs.stat(uri);
-                            const fullRange = new vscode.Range(0, 0, stats.size, 0); // Approximate full range
-                            applyEdit.replace(uri, fullRange, newContent);
-                        } else {
-                            throw new Error(`Failed to apply patch for ${change.filePath}`);
-                        }
-                    } catch (e: any) {
-                        vscode.window.showErrorMessage(`Failed to modify file ${change.filePath}: ${e.message}`);
-                    }
-                  }
-                  else if (change.type === 'delete') {
-                    applyEdit.deleteFile(uri, { recursive: true, ignoreIfNotExists: true });
-                  }
+                try {
+                    await applyChanges(changes as FileSystemOperation[], this._jobChecksums);
+                    this.postMessage('update-status', { text: 'Changes applied. Ready.' });
+                    this._activeJobId = null;
+                } catch (e: any) {
+                    vscode.window.showErrorMessage(`Failed to apply changes: ${e.message}`);
+                    this.postMessage('update-status', { text: 'Error applying changes.' });
                 }
-              
-                await vscode.workspace.applyEdit(applyEdit);
-                vscode.window.showInformationMessage(`Platypus applied ${changes.length} change(s)`);
-                this.postMessage('update-status', { text: 'Changes applied. Ready.' });
-                this._activeJobId = null;
                 break;
             }
             case 'cancel-analysis':
@@ -347,6 +280,7 @@ export class PlatypusViewProvider {
         this.postMessage('update-status', { text: `Indexing workspace and analyzing request...` });
 
         this._activeJobId = crypto.randomUUID();
+        this._jobChecksums.clear(); // Reset checksums for new job
         
         try {
             const allFiles = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out,venv,.*}/**');
@@ -362,9 +296,12 @@ export class PlatypusViewProvider {
             for (const fileUri of allFiles) {
                 const relativePath = vscode.workspace.asRelativePath(fileUri);
                 const contentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
-                // FIX: Replaced Node.js 'Buffer' with 'TextDecoder' for cross-platform compatibility when reading file content.
                 const content = new TextDecoder().decode(contentBytes);
                 const checksum = calculateChecksum(content);
+                
+                // Checksum tracking for safe application later
+                this._jobChecksums.set(relativePath, checksum);
+                
                 fileDataForBackend.push({ filePath: relativePath, content, checksum });
             }
             

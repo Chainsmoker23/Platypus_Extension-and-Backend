@@ -42,8 +42,11 @@ Return JSON only.
         const text = response.text;
         if (!text) return null;
         try {
-            return JSON.parse(text) as FileSystemOperation;
+            // Strip markdown code blocks before parsing
+            const cleanText = text.replace(/^```(json)?\n/gm, '').replace(/\n```$/gm, '').trim();
+            return JSON.parse(cleanText) as FileSystemOperation;
         } catch (e) {
+            console.warn("Failed to parse JSON from AI response", e);
             return null;
         }
     });
