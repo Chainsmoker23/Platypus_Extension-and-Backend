@@ -43,7 +43,6 @@ function chunkFile(file: FileData): DocumentChunk[] {
 }
 
 // Global cache for embeddings to avoid re-calculating for same file content
-// This saves cost and time before upserting to Qdrant
 const embeddingCache = new Map<string, DocumentChunk[]>();
 
 export async function getContextForTask(task: string, allFiles: FileData[], selectedFilePaths: string[]): Promise<FileData[]> {
@@ -85,23 +84,17 @@ export async function getContextForTask(task: string, allFiles: FileData[], sele
     }
 
     // 3. Upsert to Qdrant (Sync active workspace state)
-    // We filter only chunks that have embeddings.
-    // Qdrant service handles deduplication using deterministic IDs.
     const validChunks = allChunks.filter(c => c.embedding && c.embedding.length > 0);
     if (validChunks.length > 0) {
-         // Convert to Qdrant format
          const points: VectorPoint[] = validChunks.map(c => ({
              vector: c.embedding!,
              payload: {
                  filePath: c.filePath,
-                 content: c.content,
+                 content: c.content, // Storing chunk content for search debug/verification
                  checksum: c.checksum
              }
          }));
          
-         // Non-blocking upsert to speed up response? 
-         // For now, await it to ensure consistency for this request.
-         // In production, might want to fire-and-forget or queue.
          await upsertPoints(points);
     }
 
@@ -115,48 +108,43 @@ export async function getContextForTask(task: string, allFiles: FileData[], sele
     }
 
     // 5. Semantic Search via Qdrant
-    const qdrantResults = await searchPoints(taskEmbedding, 8);
+    // We retrieve more chunks to ensure we cover all relevant files
+    const qdrantResults = await searchPoints(taskEmbedding, 12);
 
-    let topChunks: { filePath: string; content: string; score: number }[] = [];
+    const relevantFilePaths = new Set<string>();
 
-    if (qdrantResults) {
-        // Qdrant found results
+    // Always include explicitly selected files
+    selectedFilePaths.forEach(p => relevantFilePaths.add(p));
+
+    if (qdrantResults && qdrantResults.length > 0) {
         console.log(`[DeepContext] Qdrant returned ${qdrantResults.length} matches.`);
-        topChunks = qdrantResults.map(r => ({
-            filePath: r.payload?.filePath as string,
-            content: r.payload?.content as string,
-            score: r.score
-        }));
+        qdrantResults.forEach(r => {
+             if (r.payload?.filePath) relevantFilePaths.add(r.payload.filePath as string);
+        });
     } else {
-        // Fallback to In-Memory Cosine Similarity if Qdrant not configured or failed
-        console.log(`[DeepContext] Qdrant unavailable. Using in-memory fallback.`);
-        topChunks = allChunks
-            .filter(c => c.embedding)
-            .map(c => ({
-                filePath: c.filePath,
-                content: c.content,
-                score: cosineSimilarity(taskEmbedding, c.embedding!)
-            }))
-            .sort((a, b) => (b.score || 0) - (a.score || 0))
-            .slice(0, 8);
+        console.log(`[DeepContext] Qdrant unavailable or no results. Using in-memory fallback.`);
+        const fallbackFiles = getFallbackContext(task, allFiles, selectedFilePaths);
+        fallbackFiles.forEach(f => relevantFilePaths.add(f.filePath));
     }
 
-    // 6. Boost Selected Files
-    // If we have selected files, we ensure they are part of the context or boosted
-    if (selectedFilePaths.length > 0) {
-        // Simple boost: logic is complex with just chunks, so we rely on the orchestrator 
-        // to forcefully include selected files in the prompt.
-        // However, we can use this phase to pull relevant chunks from them specifically.
-    }
+    // 6. Map back to FULL Content
+    // CRITICAL: We must return the FULL file content, not just the chunk, 
+    // so the AI can generate valid diffs with correct line numbers.
+    const finalContext: FileData[] = allFiles.filter(f => {
+        return Array.from(relevantFilePaths).some(rel => f.filePath === rel || f.filePath.endsWith(rel));
+    });
 
-    // 7. Reconstruct Virtual Files
-    const resultFiles: FileData[] = topChunks.map(c => ({
-        filePath: c.filePath,
-        content: `// ... relevant section from Qdrant Search ...\n${c.content}\n// ...`,
-        checksum: 'virtual'
-    }));
+    // 7. Sort: Selected files first, then by relevance (if we had scores per file, here we prioritize selection)
+    finalContext.sort((a, b) => {
+        const aSelected = selectedFilePaths.some(p => a.filePath.includes(p));
+        const bSelected = selectedFilePaths.some(p => b.filePath.includes(p));
+        if (aSelected && !bSelected) return -1;
+        if (!aSelected && bSelected) return 1;
+        return 0;
+    });
 
-    return resultFiles;
+    // Limit context to top 10 files to keep prompt size manageable but sufficient
+    return finalContext.slice(0, 10);
 }
 
 // In-Memory Fallback Utility
@@ -174,18 +162,20 @@ function cosineSimilarity(vecA: number[], vecB: number[]): number {
 
 function getFallbackContext(task: string, allFiles: FileData[], selectedFilePaths: string[]): FileData[] {
     const taskLower = task.toLowerCase();
-    return allFiles
+    
+    // Find files with simple keyword matching
+    const rankedFiles = allFiles
         .map(file => {
             let score = 0;
             const lowerPath = file.filePath.toLowerCase();
-            if (taskLower.includes(lowerPath)) score += 100;
-            if (selectedFilePaths.some(p => lowerPath.includes(p.toLowerCase()))) score += 20;
+            if (taskLower.includes(lowerPath)) score += 100; // Direct mention of file
+            if (selectedFilePaths.some(p => lowerPath.includes(p.toLowerCase()))) score += 1000; // Explicit selection
+            if (file.content.toLowerCase().includes(taskLower)) score += 10; // Content match
             return { file, score };
         })
         .sort((a, b) => b.score - a.score)
-        .slice(0, 3)
-        .map(item => ({
-             ...item.file,
-             content: item.file.content.length > 800 ? item.file.content.substring(0, 800) + "\n// [truncated]..." : item.file.content
-        }));
+        .slice(0, 5); // Take top 5
+
+    // Return FULL content for fallback as well
+    return rankedFiles.map(item => item.file);
 }

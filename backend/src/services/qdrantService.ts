@@ -20,11 +20,16 @@ export async function initQdrant() {
     }
 
     try {
+        // Basic validation to prevent immediate crash in client constructor
+        new URL(QDRANT_URL);
+
         client = new QdrantClient({
             url: QDRANT_URL,
             apiKey: QDRANT_API_KEY,
+            timeout: 5000, // 5s timeout for initial connection
         });
 
+        // Test connection and schema
         const collections = await client.getCollections();
         const exists = collections.collections.some(c => c.name === COLLECTION_NAME);
         
@@ -38,7 +43,8 @@ export async function initQdrant() {
             console.log(`[Qdrant] Created collection: ${COLLECTION_NAME}`);
         }
     } catch (e) {
-        console.error("[Qdrant] Initialization failed:", e);
+        console.warn("[Qdrant] Connection failed or misconfigured. Falling back to in-memory search.");
+        console.warn(`[Qdrant] Error details: ${e instanceof Error ? e.message : String(e)}`);
         client = null;
     }
     return client;
@@ -78,7 +84,7 @@ export async function upsertPoints(points: VectorPoint[]) {
         });
         
     } catch (e) {
-        console.error("[Qdrant] Upsert failed:", e);
+        console.error("[Qdrant] Upsert failed (non-fatal):", e instanceof Error ? e.message : String(e));
     }
 }
 
@@ -93,7 +99,7 @@ export async function searchPoints(vector: number[], limit: number = 8) {
             with_payload: true,
         });
     } catch (e) {
-        console.error("[Qdrant] Search failed:", e);
+        console.error("[Qdrant] Search failed (falling back):", e instanceof Error ? e.message : String(e));
         return null;
     }
 }

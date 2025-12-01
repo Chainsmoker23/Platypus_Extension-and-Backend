@@ -104,8 +104,8 @@ export async function generateWorkspaceAnalysis(
 
         if (onProgress) onProgress(`Running subtask ${i + 1}/${intents.length}: ${task}`);
 
-        // Context Phase (Now Async with Deep Embedding)
-        // We now await the deep embedding context retrieval
+        // Context Phase: Deep Retrieval + Full Content
+        // We retrieve the most relevant files (complete content) to ensure the AI can write valid diffs.
         const context = await getContextForTask(task, files, selectedFilePaths);
 
         // Execution Phase
