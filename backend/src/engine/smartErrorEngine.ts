@@ -4,7 +4,7 @@ import { createTwoFilesPatch } from 'diff';
 import { FileData, FileSystemOperation } from '../types/index';
 import { withRotatingKey } from './apiKeyRotator';
 
-export async function resolveErrors(diagnostics: string[], files: FileData[]): Promise<FileSystemOperation[]> {
+export async function resolveErrors(diagnostics: string[], files: FileData[], prompt: string): Promise<FileSystemOperation[]> {
     if (!diagnostics || diagnostics.length === 0) return [];
 
     const operations: FileSystemOperation[] = [];
@@ -20,14 +20,37 @@ export async function resolveErrors(diagnostics: string[], files: FileData[]): P
         }
     }
 
-    // 2. Analyze each file with errors
-    for (const [filePath, fileErrors] of errorsByFile.entries()) {
+    // 2. Filtering & Throttling
+    // Logic: If user specifically asked to fix "Header.tsx", only fix that.
+    // Otherwise, fix up to 3 most critical files to prevent API rate limits.
+    
+    let targetFiles = Array.from(errorsByFile.keys());
+    const promptLower = prompt.toLowerCase();
+
+    const specificMentions = targetFiles.filter(fp => promptLower.includes(fp.toLowerCase()) || promptLower.includes(fp.split('/').pop()?.toLowerCase() || ''));
+
+    if (specificMentions.length > 0) {
+        // User is specific -> Focused fix
+        targetFiles = specificMentions;
+    } else {
+        // User is generic -> Limit to top 3 files (throttling)
+        if (targetFiles.length > 3) {
+            console.warn(`[SmartError] Too many files with errors (${targetFiles.length}). Throttling to top 3.`);
+            targetFiles = targetFiles.slice(0, 3);
+        }
+    }
+
+    // 3. Analyze each filtered file
+    for (const filePath of targetFiles) {
+        const fileErrors = errorsByFile.get(filePath);
+        if (!fileErrors) continue;
+
         const file = files.find(f => f.filePath === filePath);
         if (!file) continue;
 
         const errorMsg = fileErrors.join('\n');
         
-        // 3. Send to Gemini
+        // 4. Send to Gemini
         await withRotatingKey(async (key) => {
             const ai = new GoogleGenAI({apiKey: key});
             const response = await ai.models.generateContent({
@@ -62,7 +85,7 @@ Return JSON only.
 
             const result = JSON.parse(response.text || "{}");
             
-            // 4. Generate Diff
+            // 5. Generate Diff
             if (result.fixedContent) {
                 const patch = createTwoFilesPatch(
                     filePath,

@@ -18,6 +18,7 @@ export class PlatypusViewProvider {
     private _activeJobId: string | null = null;
     private _jobChecksums = new Map<string, string>();
     private readonly workspaceRoot: string | undefined = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    private readonly MAX_FILE_SIZE = 100 * 1024; // 100KB Limit
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -293,16 +294,43 @@ export class PlatypusViewProvider {
             }
 
             const fileDataForBackend: FileData[] = [];
+            let skippedCount = 0;
+
             for (const fileUri of allFiles) {
-                const relativePath = vscode.workspace.asRelativePath(fileUri);
-                const contentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
-                const content = new TextDecoder().decode(contentBytes);
-                const checksum = calculateChecksum(content);
-                
-                // Checksum tracking for safe application later
-                this._jobChecksums.set(relativePath, checksum);
-                
-                fileDataForBackend.push({ filePath: relativePath, content, checksum });
+                try {
+                    const relativePath = vscode.workspace.asRelativePath(fileUri);
+                    
+                    // SAFETY 1: Skip Lock Files and common binary/large text formats
+                    if (relativePath.includes('package-lock.json') || 
+                        relativePath.includes('yarn.lock') || 
+                        relativePath.endsWith('.svg') ||
+                        relativePath.endsWith('.png') ||
+                        relativePath.endsWith('.ico')) {
+                        continue;
+                    }
+
+                    // SAFETY 2: Check File Size (limit to 100KB)
+                    const stat = await (vscode.workspace as any).fs.stat(fileUri);
+                    if (stat.size > this.MAX_FILE_SIZE) {
+                        skippedCount++;
+                        continue;
+                    }
+
+                    const contentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
+                    const content = new TextDecoder().decode(contentBytes);
+                    const checksum = calculateChecksum(content);
+                    
+                    // Checksum tracking for safe application later
+                    this._jobChecksums.set(relativePath, checksum);
+                    
+                    fileDataForBackend.push({ filePath: relativePath, content, checksum });
+                } catch (readErr) {
+                    console.warn(`Failed to read file ${fileUri.fsPath}:`, readErr);
+                }
+            }
+
+            if (skippedCount > 0) {
+                console.log(`Skipped ${skippedCount} large files (>100KB) to prevent overload.`);
             }
             
             // Gather diagnostics to send to backend for error fixing

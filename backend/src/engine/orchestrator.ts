@@ -71,7 +71,8 @@ export async function generateWorkspaceAnalysis(
     if (isFixRequest) {
         if (onProgress) onProgress("Running God-tier error analysis...");
         try {
-            const changes = await resolveErrors(diagnostics!, files);
+            // PASS PROMPT TO FILTER FIXES
+            const changes = await resolveErrors(diagnostics!, files, prompt);
             if (onProgress) onProgress("Root cause identified. Fix ready.");
             return {
                 reasoning: "Smart Error Engine resolved diagnostics with high confidence.",

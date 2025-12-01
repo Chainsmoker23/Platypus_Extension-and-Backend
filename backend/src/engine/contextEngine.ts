@@ -67,8 +67,17 @@ export async function getContextForTask(task: string, allFiles: FileData[], sele
         embeddingCache.set(file.checksum, fileChunks);
     }
 
-    // 2. Generate Embeddings for new chunks (Parallelized)
+    // 2. Generate Embeddings for new chunks (Parallelized with Throttling)
     if (chunksToEmbed.length > 0) {
+        // OVERLOAD PROTECTION:
+        // If we have massive amount of code to embed (e.g. initial load of large repo),
+        // we throttle to the first 30 chunks to prevent immediate 429 quota exhaustion.
+        // In subsequent requests, others will get embedded.
+        if (chunksToEmbed.length > 30) {
+             console.warn(`[DeepContext] Too many new chunks (${chunksToEmbed.length}). Throttling to top 30 to prevent API Rate Limits.`);
+             chunksToEmbed.length = 30; // Truncate array
+        }
+
         console.log(`[DeepContext] Embedding ${chunksToEmbed.length} new code chunks...`);
         const BATCH_SIZE = 5; 
         for (let i = 0; i < chunksToEmbed.length; i += BATCH_SIZE) {
