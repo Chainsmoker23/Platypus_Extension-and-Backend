@@ -1,33 +1,33 @@
 
 import { FileData } from '../types/index';
 import { embedText } from '../services/embeddingService';
+import { upsertPoints, searchPoints, VectorPoint } from '../services/qdrantService';
 
-// In-memory Vector Store Types
+// In-memory Vector Store Types (Fallback)
 interface DocumentChunk {
     filePath: string;
     content: string;
     embedding?: number[];
     score?: number;
+    checksum?: string;
 }
 
-const CHUNK_SIZE = 1000; // Characters roughly
+const CHUNK_SIZE = 1000; 
 const OVERLAP = 100;
 
-// Simple chunking strategy
 function chunkFile(file: FileData): DocumentChunk[] {
     const chunks: DocumentChunk[] = [];
     const lines = file.content.split('\n');
     let currentChunk = '';
-    let startLine = 0;
-
+    
     for (let i = 0; i < lines.length; i++) {
         currentChunk += lines[i] + '\n';
         if (currentChunk.length >= CHUNK_SIZE) {
             chunks.push({
                 filePath: file.filePath,
-                content: currentChunk
+                content: currentChunk,
+                checksum: file.checksum
             });
-            // Overlap: Keep last few lines
             const overlapLines = lines.slice(Math.max(0, i - 5), i + 1).join('\n');
             currentChunk = overlapLines + '\n';
         }
@@ -35,27 +35,15 @@ function chunkFile(file: FileData): DocumentChunk[] {
     if (currentChunk.trim().length > 0) {
         chunks.push({
             filePath: file.filePath,
-            content: currentChunk
+            content: currentChunk,
+            checksum: file.checksum
         });
     }
     return chunks;
 }
 
-// Cosine Similarity
-function cosineSimilarity(vecA: number[], vecB: number[]): number {
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    for (let i = 0; i < vecA.length; i++) {
-        dotProduct += vecA[i] * vecB[i];
-        normA += vecA[i] * vecA[i];
-        normB += vecB[i] * vecB[i];
-    }
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
 // Global cache for embeddings to avoid re-calculating for same file content
-// Key: file checksum, Value: DocumentChunk[] with embeddings
+// This saves cost and time before upserting to Qdrant
 const embeddingCache = new Map<string, DocumentChunk[]>();
 
 export async function getContextForTask(task: string, allFiles: FileData[], selectedFilePaths: string[]): Promise<FileData[]> {
@@ -66,28 +54,23 @@ export async function getContextForTask(task: string, allFiles: FileData[], sele
     const chunksToEmbed: { chunk: DocumentChunk, index: number }[] = [];
 
     for (const file of allFiles) {
-        // If cached, use it
         if (embeddingCache.has(file.checksum)) {
             allChunks.push(...embeddingCache.get(file.checksum)!);
             continue;
         }
 
         const fileChunks = chunkFile(file);
-        // Mark for embedding
         fileChunks.forEach(c => {
             allChunks.push(c);
             chunksToEmbed.push({ chunk: c, index: allChunks.length - 1 });
         });
         
-        // Optimistically cache (will fill embeddings later)
         embeddingCache.set(file.checksum, fileChunks);
     }
 
     // 2. Generate Embeddings for new chunks (Parallelized)
-    // Only if we have chunks to embed. This limits API calls.
     if (chunksToEmbed.length > 0) {
         console.log(`[DeepContext] Embedding ${chunksToEmbed.length} new code chunks...`);
-        // Process in small batches to avoid rate limits if necessary
         const BATCH_SIZE = 5; 
         for (let i = 0; i < chunksToEmbed.length; i += BATCH_SIZE) {
             const batch = chunksToEmbed.slice(i, i + BATCH_SIZE);
@@ -101,7 +84,28 @@ export async function getContextForTask(task: string, allFiles: FileData[], sele
         }
     }
 
-    // 3. Embed the Task
+    // 3. Upsert to Qdrant (Sync active workspace state)
+    // We filter only chunks that have embeddings.
+    // Qdrant service handles deduplication using deterministic IDs.
+    const validChunks = allChunks.filter(c => c.embedding && c.embedding.length > 0);
+    if (validChunks.length > 0) {
+         // Convert to Qdrant format
+         const points: VectorPoint[] = validChunks.map(c => ({
+             vector: c.embedding!,
+             payload: {
+                 filePath: c.filePath,
+                 content: c.content,
+                 checksum: c.checksum
+             }
+         }));
+         
+         // Non-blocking upsert to speed up response? 
+         // For now, await it to ensure consistency for this request.
+         // In production, might want to fire-and-forget or queue.
+         await upsertPoints(points);
+    }
+
+    // 4. Embed the Task
     let taskEmbedding: number[];
     try {
         taskEmbedding = await embedText(task);
@@ -110,38 +114,64 @@ export async function getContextForTask(task: string, allFiles: FileData[], sele
         return getFallbackContext(task, allFiles, selectedFilePaths);
     }
 
-    // 4. Semantic Search
-    const scoredChunks = allChunks
-        .filter(c => c.embedding) // Ensure embedding exists
-        .map(c => ({
-            ...c,
-            score: cosineSimilarity(taskEmbedding, c.embedding!)
+    // 5. Semantic Search via Qdrant
+    const qdrantResults = await searchPoints(taskEmbedding, 8);
+
+    let topChunks: { filePath: string; content: string; score: number }[] = [];
+
+    if (qdrantResults) {
+        // Qdrant found results
+        console.log(`[DeepContext] Qdrant returned ${qdrantResults.length} matches.`);
+        topChunks = qdrantResults.map(r => ({
+            filePath: r.payload?.filePath as string,
+            content: r.payload?.content as string,
+            score: r.score
         }));
+    } else {
+        // Fallback to In-Memory Cosine Similarity if Qdrant not configured or failed
+        console.log(`[DeepContext] Qdrant unavailable. Using in-memory fallback.`);
+        topChunks = allChunks
+            .filter(c => c.embedding)
+            .map(c => ({
+                filePath: c.filePath,
+                content: c.content,
+                score: cosineSimilarity(taskEmbedding, c.embedding!)
+            }))
+            .sort((a, b) => (b.score || 0) - (a.score || 0))
+            .slice(0, 8);
+    }
 
-    // 5. Boost Selected Files
-    scoredChunks.forEach(c => {
-        if (selectedFilePaths.some(p => c.filePath.includes(p))) {
-            c.score = (c.score || 0) + 0.2; // Significant boost
-        }
-    });
+    // 6. Boost Selected Files
+    // If we have selected files, we ensure they are part of the context or boosted
+    if (selectedFilePaths.length > 0) {
+        // Simple boost: logic is complex with just chunks, so we rely on the orchestrator 
+        // to forcefully include selected files in the prompt.
+        // However, we can use this phase to pull relevant chunks from them specifically.
+    }
 
-    // 6. Select Top Chunks and Reconstruct Files
-    // We return "FileData" because the execution engine expects that structure.
-    // We construct virtual files containing only the relevant chunks.
-    const topChunks = scoredChunks
-        .sort((a, b) => (b.score || 0) - (a.score || 0))
-        .slice(0, 5); // Take top 5 most relevant chunks
-
+    // 7. Reconstruct Virtual Files
     const resultFiles: FileData[] = topChunks.map(c => ({
         filePath: c.filePath,
-        content: `// ... relevant section ...\n${c.content}\n// ...`,
+        content: `// ... relevant section from Qdrant Search ...\n${c.content}\n// ...`,
         checksum: 'virtual'
     }));
 
     return resultFiles;
 }
 
-// Fallback logic (original heuristic)
+// In-Memory Fallback Utility
+function cosineSimilarity(vecA: number[], vecB: number[]): number {
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < vecA.length; i++) {
+        dotProduct += vecA[i] * vecB[i];
+        normA += vecA[i] * vecA[i];
+        normB += vecB[i] * vecB[i];
+    }
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
 function getFallbackContext(task: string, allFiles: FileData[], selectedFilePaths: string[]): FileData[] {
     const taskLower = task.toLowerCase();
     return allFiles
@@ -149,9 +179,7 @@ function getFallbackContext(task: string, allFiles: FileData[], selectedFilePath
             let score = 0;
             const lowerPath = file.filePath.toLowerCase();
             if (taskLower.includes(lowerPath)) score += 100;
-            else if (taskLower.includes(lowerPath.split('/').pop() || '')) score += 50;
             if (selectedFilePaths.some(p => lowerPath.includes(p.toLowerCase()))) score += 20;
-            if (lowerPath.startsWith('src/')) score += 5;
             return { file, score };
         })
         .sort((a, b) => b.score - a.score)

@@ -21,7 +21,8 @@
     "uuid": "^13.0.0",
     "diff": "^8.0.2",
     "path": "^0.12.7",
-    "crypto": "^1.0.1"
+    "crypto": "^1.0.1",
+    "@qdrant/js-client-rest": "^1.16.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
