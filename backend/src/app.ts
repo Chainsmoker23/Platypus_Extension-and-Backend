@@ -2,30 +2,37 @@ import express from 'express';
 import cors from 'cors';
 import { analyzeRouter } from './routes/analyzeRoutes';
 import { jobRouter } from './routes/jobRoutes';
-import { codeIntelligenceRouter } from './routes/codeIntelligenceRoutes';
-import { loggingMiddleware } from './middlewares/loggingMiddleware';
-import { errorHandler } from './middlewares/errorHandler';
+import { knowledgeRouter } from './routes/knowledgeRoutes';
 
 const app = express();
 
-// Core Middlewares
-app.use(cors() as any);
-app.use(express.json({ limit: '50mb' }) as any);
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '50mb' })); // Increased for codebase indexing
+app.use((req, _res, next) => {
+  (req as any).reqId = Math.random().toString(36).substr(2, 9);
+  next();
+});
 
-// Custom Middlewares
-// FIX: Cast loggingMiddleware to any to avoid type mismatch issues with Express RequestHandler
-app.use(loggingMiddleware as any);
+// Health Check
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
 
 // API Routes
-app.get('/', (req, res) => {
-  res.send('Platypus Backend is running!');
+app.use('/api/analyze', analyzeRouter);
+app.use('/api/jobs', jobRouter);
+app.use('/api/knowledge', knowledgeRouter); // RAG & Vector DB routes
+
+// 404 Handler
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
 });
-app.use('/api/v1/analyze', analyzeRouter);
-app.use('/api/v1/jobs', jobRouter);
-app.use('/api/v1/code-intelligence', codeIntelligenceRouter);
 
-
-// Error Handling Middleware (must be last)
-app.use(errorHandler);
+// Global Error Handler
+app.use((err: any, req: any, res: any, _next: any) => {
+  console.error(`[error] [${req.reqId}]`, err.stack || err);
+  res.status(500).json({ error: 'Internal server error', details: err.message });
+});
 
 export { app };

@@ -4,6 +4,7 @@ import { handleAnalysisRequest } from '../controllers/analysisController';
 
 const router = Router();
 
-router.post('/', handleAnalysisRequest);
+// Delegate POST /api/analyze to the full intelligent agent pipeline
+router.post('/', handleAnalysisRequest as any);
 
 export { router as analyzeRouter };

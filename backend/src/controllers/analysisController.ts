@@ -1,62 +1,90 @@
 
-import { Request, Response, NextFunction } from 'express';
-// FIX: Import from the new engine orchestrator instead of the old geminiService
-import { generateWorkspaceAnalysis } from '../engine/orchestrator';
-import { AnalysisRequest } from '../types/index';
-import { jobManager } from '../services/jobManager';
+import { Request, Response } from 'express';
+import { z } from 'zod';
+import { runAgent } from '../agent/agent';
+import { handleConversation } from '../services/smartChat';
 
-export const handleAnalysisRequest = async (req: Request, res: Response, next: NextFunction) => {
-    // FIX: Cast req to any to access body
-    const { prompt, files, jobId, selectedFilePaths, diagnostics } = (req as any).body as AnalysisRequest;
+const analysisSchema = z.object({
+  prompt: z.string().min(1),
+  files: z.array(z.object({
+    filePath: z.string(),
+    content: z.string(),
+  })),
+  jobId: z.string().optional(),
+  selectedFilePaths: z.array(z.string()).optional(),
+  diagnostics: z.array(z.string()).optional(),
+  workspaceId: z.string().optional(), // For RAG context
+  model: z.string().optional(), // Manual model selection
+});
+
+export const handleAnalysisRequest = async (req: Request, res: Response) => {
+  const requestId = (req as any).reqId ?? 'unknown';
+
+  let parsed: z.infer<typeof analysisSchema>;
+  try {
+    parsed = analysisSchema.parse((req as any).body);
+  } catch (err) {
+    console.error(`[${requestId}] Invalid analyze payload`, err);
+    res.status(400).json({ error: 'Invalid request payload' });
+    return;
+  }
+
+  const { prompt, files, selectedFilePaths = [], diagnostics = [], workspaceId, model } = parsed;
+
+  (res as any).setHeader('Content-Type', 'application/x-ndjson');
+  (res as any).setHeader('Transfer-Encoding', 'chunked');
+
+  const writeProgress = (message: string) => {
+    (res as any).write(JSON.stringify({ type: 'progress', message }) + '\n');
+  };
+
+  try {
+    console.log(`[${requestId}] analyze: ${prompt.slice(0, 120)}... (${files.length} files)`);
     
-    const requestId = (req as any).id;
-
-    if (!prompt || !files || !Array.isArray(files) || files.length === 0) {
-        console.error(`[${requestId}] Bad Request: Missing prompt or files.`);
-        // FIX: Cast res to any to access status
-        return (res as any).status(400).json({ error: 'Missing prompt or files' });
-    }
-    
-    if (!jobId) {
-        console.error(`[${requestId}] Bad Request: Missing jobId.`);
-        // FIX: Cast res to any to access status
-        return (res as any).status(400).json({ error: 'Missing jobId' });
-    }
-
-    const signal = jobManager.create(jobId);
-
-    // Set headers for NDJSON streaming
-    // FIX: Cast res to any to access setHeader
-    (res as any).setHeader('Content-Type', 'application/x-ndjson');
-    (res as any).setHeader('Transfer-Encoding', 'chunked');
-
-    try {
-        console.log(`[${requestId}] Received workspace analysis request for job ${jobId} with ${files.length} files.`);
-        
-        const result = await generateWorkspaceAnalysis(prompt, files, signal, selectedFilePaths, (message) => {
-            // FIX: Cast res to any to access write
-            (res as any).write(JSON.stringify({ type: 'progress', message }) + '\n');
-        }, diagnostics);
-
-        console.log(`[${requestId}] Analysis for job ${jobId} successful.`);
-        jobManager.complete(jobId);
-        
-        // FIX: Cast res to any to access write and end
-        (res as any).write(JSON.stringify({ type: 'result', data: result }) + '\n');
-        (res as any).end();
-
-    } catch (error) {
-        if (error instanceof Error && error.message === 'Aborted') {
-            console.log(`[${requestId}] Job ${jobId} was cancelled.`);
-            jobManager.cancel(jobId);
-        } else {
-            jobManager.fail(jobId);
+    // Try smart chat for simple conversational prompts
+    const conversationResult = await handleConversation(prompt, writeProgress);
+    if (conversationResult?.isConversational) {
+      // Simple chat response - no code changes
+      (res as any).write(JSON.stringify({ 
+        type: 'result', 
+        data: {
+          reasoning: conversationResult.response,
+          changes: [],
         }
-        
-        // Since headers are already sent, we must stream the error
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        // FIX: Cast res to any to access write and end
-        (res as any).write(JSON.stringify({ type: 'error', error: { message: errorMessage } }) + '\n');
-        (res as any).end();
+      }) + '\n');
+      (res as any).end();
+      return;
     }
-}
+    
+    // For non-conversational prompts, proceed with full analysis
+    writeProgress('Analyzing workspace structure...');
+    writeProgress('Planning changes...');
+    
+    // More detailed progress updates
+    const progressInterval = setInterval(() => {
+      writeProgress('Still working on your request...');
+    }, 5000);
+
+    const result = await runAgent({
+      prompt,
+      files,
+      selectedFilePaths,
+      diagnostics,
+      workspaceId,
+      model, // Pass model selection
+      onProgress: writeProgress,
+    });
+    
+    clearInterval(progressInterval);
+
+    (res as any).write(JSON.stringify({ type: 'result', data: result }) + '\n');
+    (res as any).end();
+  } catch (error: any) {
+    console.error(`[${requestId}] Agent error`, error);
+    (res as any).write(JSON.stringify({
+      type: 'error',
+      error: { message: error?.message || 'Agent failed' },
+    }) + '\n');
+    (res as any).end();
+  }
+};

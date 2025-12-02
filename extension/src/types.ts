@@ -12,3 +12,14 @@ export interface AnalysisResult {
     reasoning: string;
     changes: FileSystemOperation[];
 }
+
+// Simplified ChatMessage interface for persistence
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'ai';
+  content: string;
+  jobId?: string;
+  isLoading?: boolean;
+  changes?: FileSystemOperation[];
+  progressLogs?: string[];
+}

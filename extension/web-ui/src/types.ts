@@ -9,6 +9,16 @@ export interface FileSystemOperation {
   explanation?: string;
 }
 
+// Progress step for detailed streaming UI
+export interface ProgressStep {
+  id: string;
+  type: 'thinking' | 'analyzing' | 'generating' | 'file-change' | 'complete' | 'error';
+  message: string;
+  filePath?: string;
+  linesChanged?: { added: number; removed: number };
+  timestamp: number;
+}
+
 // A single message in the conversation.
 export interface ChatMessage {
   id: string;
@@ -18,6 +28,7 @@ export interface ChatMessage {
   isLoading?: boolean;
   changes?: FileSystemOperation[];
   progressLogs?: string[];
+  progressSteps?: ProgressStep[]; // Enhanced progress tracking
 }
 
 // A unified message type for communication between the webview and the extension.
@@ -30,6 +41,8 @@ export interface PlatypusMessage {
       'apply-changes' |
       'attach-files' |
       'preview-changes' |
+      'index-codebase' |
+      'get-knowledge-status' |
       // Extension -> Webview
       'chat-update' |
       'analysis-complete' |
@@ -37,7 +50,9 @@ export interface PlatypusMessage {
       'error' |
       'update-status' |
       'update-selected-files' |
-      'progress-update';
+      'progress-update' |
+      'indexing-status' |
+      'knowledge-status';
     payload?: any;
 }
 

@@ -4,26 +4,43 @@
 @tailwind utilities;
 
 body {
-  background-color: #0d1117;
-  color: #c9d1d9;
-}
+  background-color: #02040a; /* full black-ish background */
+  color: #e5e7eb;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+ }
 
-/* Custom Scrollbar - GitHub Style */
+/* Custom Scrollbar - Mobile Safe */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: #222b3a;
   border-radius: 6px;
-  border: 2px solid #0d1117; /* Matches background for padding effect */
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #8b949e;
+::-webkit-scrollbar-thumb:hover { background: #394963; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* Animations for chat, error, header, etc */
+.animate-in { 
+  animation-duration: 0.3s;
+  animation-timing-function: cubic-bezier(.19,1,.22,1);
 }
-::-webkit-scrollbar-corner {
-  background: transparent;
+.fade-in { animation-name: fadein; }
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+.slide-in-from-left { animation-name: slideInLeft; }
+@keyframes slideInLeft { from { transform: translateX(-40px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+.slide-in-from-top { animation-name: slideInTop; }
+@keyframes slideInTop { from { transform: translateY(-30px); opacity: 0.5; } to { transform: none; opacity: 1; } }
+
+/* Chat bubble selection */
+::selection, .prose ::selection { background: #1f6feb; color: #ffffff; }
+
+/* Button focus */
+button:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: 2px;
 }

@@ -70,10 +70,42 @@ export const VscTrash: React.FC<IconProps> = (props) => (
     <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M4.5 2.5l.5-1h5l.5 1H14v1H2v-1h2.5zm-.5 2v9h10v-9h-10zm2 1h1v6h-1v-6zm3 0h1v6h-1v-6z"/></svg>
 );
 
+export const VscEdit: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M13.23 1h-1.46L3.52 9.25l-.16.22L1 13.59 2.41 15l4.12-2.36.22-.16L15 4.23V2.77L13.23 1zM2.41 13.59l1.51-3 1.45 1.45-2.96 1.55zm3.83-2.06L4.47 9.76l6.69-6.69 1.77 1.77-6.69 6.69z"/></svg>
+);
+
+export const VscAdd: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M14 7v1H8v6H7V8H1V7h6V1h1v6h6z"/></svg>
+);
+
 export const VscMove: React.FC<IconProps> = (props) => (
     <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M12.5 6.5L15 8l-2.5 1.5v-3zM9.5 9.5l1.5 2.5H8l-1.5-2.5h3zM6.5 6.5v3L5 8l1.5-1.5zM9.5 3.5L8 5l-1.5-1.5h3zM8 0L5.5 2.5H2v12h12v-12H10.5L8 0zM3 13.5V3.5h2.09L7 5.41 8 6.32l1- .91 1.91-1.91H13v10H3z"/></svg>
 );
 
 export const VscAttachment: React.FC<IconProps> = (props) => (
     <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M8.5 1.5a.5.5 0 0 0-1 0V8c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V3c0-1.65-1.35-3-3-3S4 1.35 4 3v6c0 2.21 1.79 4 4 4s4-1.79 4-4V4.5a.5.5 0 0 0-1 0V9c0 1.65-1.35 3-3 3s-3-1.35-3-3V3c0-1.1.9-2 2-2s2 .9 2 2v5.5a.5.5 0 0 0 1 0V1.5z"/></svg>
+);
+
+export const VscDatabase: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M8 1C4.69 1 2 2.12 2 3.5v9C2 13.88 4.69 15 8 15s6-1.12 6-2.5v-9C14 2.12 11.31 1 8 1zm0 1c2.76 0 5 .9 5 2s-2.24 2-5 2-5-.9-5-2 2.24-2 5-2zm5 10.5c0 1.1-2.24 2-5 2s-5-.9-5-2v-2.26C4.23 11.01 5.97 11.5 8 11.5s3.77-.49 5-1.26v2.26zm0-4c0 1.1-2.24 2-5 2s-5-.9-5-2V6.24C4.23 7.01 5.97 7.5 8 7.5s3.77-.49 5-1.26V8.5z"/></svg>
+);
+
+export const VscSettings: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 14.5a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13z"/><path d="M8 3.5a.5.5 0 0 0-.5.5v3.5H4a.5.5 0 0 0 0 1h3.5V12a.5.5 0 0 0 1 0V8.5H12a.5.5 0 0 0 0-1H8.5V4a.5.5 0 0 0-.5-.5z"/></svg>
+);
+
+export const VscJson: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M3 1.5h6.5L12 4v3.5H3V1.5zM4 2.5v5h7V4.5H8.5V2.5H4zm4.5 7H12v-1h-1v-1h-1v1h-1v1h.5v.5H8v1h.5v.5h-1v1h1v-1h.5v-.5H12v-1h-1v-1h-1.5v-.5zM3 8.5h3.5v5H3v-5zm1 1v3h1.5v-3H4z"/></svg>
+);
+
+export const VscMarkdown: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M14 2.5h-3.5L8 0 5.5 2.5H2v11h12v-11zm-1 10H3v-9h1.5L6.5 5l1.5-1.5L10 5l1.5-1.5L13 5h1.5v7z"/><path d="M6 7h1v3H6V7zm2 0h1v3H8V7zm2 0h1v3h-1V7z"/></svg>
+);
+
+export const VscPackage: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M1 3.5l7-3 7 3v9l-7 3-7-3v-9zm1 1.1l5.5 2.4v5.5l-5.5-2.4V4.6zm6.5 2.4L14 4.6v5.5l-5.5 2.4V7zm-1 6.4V8.5l5.5-2.4v5.5l-5.5 2.4z"/></svg>
+);
+
+export const VscSync: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M2.35 8.65a6 6 0 0 1 10.9-4.15l.75-.75V6.5H11.25l.9-.9a4.5 4.5 0 0 0-8.19 3.14l-.71.71-.9-.9zm11.3-1.3a6 6 0 0 1-10.9 4.15l-.75.75V9.5H4.75l-.9.9a4.5 4.5 0 0 0 8.19-3.14l.71-.71.9.9z"/></svg>
 );

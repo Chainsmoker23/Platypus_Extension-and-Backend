@@ -1,13 +1,11 @@
-
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as Diff from 'diff';
 import { calculateChecksum } from './utils/workspaceUtils';
-import { callBackend, cancelBackendJob } from './utils/backendApi';
-import type { FileData } from './utils/backendApi';
-import { AnalysisResult, FileSystemOperation } from './types';
-import { checkLocalBrain } from './services/localBrain';
+import { callBackend, cancelBackendJob, indexCodebase, getKnowledgeStatus } from './utils/backendApi';
+import type { FileData, IndexingProgress } from './utils/backendApi';
+import { AnalysisResult, FileSystemOperation, ChatMessage } from './types';
 import { applyChanges } from './utils/diffApplier';
 
 
@@ -17,18 +15,51 @@ export class PlatypusViewProvider {
     private _disposables: vscode.Disposable[] = [];
     private _activeJobId: string | null = null;
     private _jobChecksums = new Map<string, string>();
+    private _workspaceId: string | null = null;
+    private _isAutoIndexing: boolean = false;
+    private _conversationHistory: ChatMessage[] = [];
     private readonly workspaceRoot: string | undefined = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    private readonly MAX_FILE_SIZE = 100 * 1024; // 100KB Limit
+    private readonly MAX_FILE_SIZE = 200 * 1024; // Increased to 200KB
 
-	constructor(
-		private readonly _extensionUri: vscode.Uri,
-	) { }
+    // State management
+    private static readonly CONVERSATION_HISTORY_KEY = 'platypus.conversationHistory';
 
-	public resolveWebviewView(
-		webviewView: any,
-		context: any,
-		_token: vscode.CancellationToken,
-	) {
+    constructor(
+        private readonly _extensionUri: vscode.Uri,
+    ) { 
+        // Load conversation history from global state on initialization
+        this.loadConversationHistory();
+    }
+
+    /**
+     * Load conversation history from VS Code global state
+     */
+    private loadConversationHistory() {
+        try {
+            const savedHistory = vscode.workspace
+                .getConfiguration()
+                .get<ChatMessage[]>(PlatypusViewProvider.CONVERSATION_HISTORY_KEY, []);
+            this._conversationHistory = savedHistory || [];
+        } catch (e) {
+            console.error('Failed to load conversation history:', e);
+            this._conversationHistory = [];
+        }
+    }
+
+    /**
+     * Save conversation history to VS Code global state
+     */
+    private saveConversationHistory() {
+        try {
+            vscode.workspace
+                .getConfiguration()
+                .update(PlatypusViewProvider.CONVERSATION_HISTORY_KEY, this._conversationHistory, vscode.ConfigurationTarget.Global);
+        } catch (e) {
+            console.error('Failed to save conversation history:', e);
+        }
+    }
+
+	public resolveWebviewView(webviewView: vscode.WebviewView) {
 		this._view = webviewView;
 
 		webviewView.webview.options = {
@@ -37,14 +68,30 @@ export class PlatypusViewProvider {
 		};
 
 		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-		webviewView.webview.onDidReceiveMessage(this.handleMessage.bind(this));
-        webviewView.onDidDispose(() => this.dispose(), null, this._disposables);
+
+		// Register message handler - connects webview to handleMessage method
+        const msgDisposable = webviewView.webview.onDidReceiveMessage(async (message: any) => {
+            await this.handleMessage(message);
+        });
+
+        this._disposables.push(msgDisposable);
+
+		webviewView.onDidDispose(() => this.dispose(), null, this._disposables);
 	}
 
     private postMessage(command: string, payload: any) {
         if (this._view) {
             this._view.webview.postMessage({ command, payload });
         }
+    }
+
+    private postChatMessage(message: ChatMessage) {
+        // Add to conversation history
+        this._conversationHistory = [...this._conversationHistory, message];
+        // Save conversation history
+        this.saveConversationHistory();
+        // Send to webview
+        this.postMessage('chat-update', message);
     }
 
     private handleAttachFiles = async () => {
@@ -146,11 +193,19 @@ export class PlatypusViewProvider {
 
         switch (message.command) {
             case 'webview-ready':
-                this.postMessage('chat-update', {
-                    id: crypto.randomUUID(),
-                    role: 'ai',
-                    content: 'Welcome to Platypus AI. Describe the changes you want to make to your project.',
+                // Send conversation history first
+                this._conversationHistory.forEach(message => {
+                    this.postMessage('chat-update', message);
                 });
+                
+                // Then send welcome message if conversation is empty
+                if (this._conversationHistory.length === 0) {
+                    this.postChatMessage({
+                        id: crypto.randomUUID(),
+                        role: 'ai',
+                        content: 'Welcome to Platypus AI. Describe the changes you want to make to your project.',
+                    });
+                }
                 this.postMessage('update-status', { text: `Ready` });
                 break;
             case 'attach-files': {
@@ -232,6 +287,232 @@ export class PlatypusViewProvider {
             case 'cancel-analysis':
                 await this.handleCancelRequest();
                 break;
+            case 'index-codebase':
+                await this.handleIndexCodebase();
+                break;
+            case 'get-knowledge-status':
+                await this.handleGetKnowledgeStatus();
+                break;
+        }
+    }
+
+    private async handleIndexCodebase() {
+        if (!this._view) return;
+
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showErrorMessage('No workspace open');
+            return;
+        }
+
+        this.postMessage('indexing-status', { phase: 'starting', message: 'Starting codebase indexing...' });
+
+        try {
+            const allFiles = await vscode.workspace.findFiles(
+                '**/*',
+                '**/{node_modules,.git,dist,build,out,venv,.next,.vscode,coverage,*.lock}/**'
+            );
+
+            if (allFiles.length === 0) {
+                this.postMessage('indexing-status', { phase: 'error', message: 'No files found in workspace' });
+                return;
+            }
+
+            this.postMessage('indexing-status', { 
+                phase: 'reading', 
+                message: `Reading ${allFiles.length} files...`,
+                current: 0,
+                total: allFiles.length 
+            });
+
+            const filesForIndexing: { filePath: string; content: string }[] = [];
+            let processed = 0;
+
+            for (const fileUri of allFiles) {
+                try {
+                    const relativePath = vscode.workspace.asRelativePath(fileUri);
+                    
+                    // Skip binary and large files
+                    if (this.shouldSkipFile(relativePath)) continue;
+
+                    const stat = await (vscode.workspace as any).fs.stat(fileUri);
+                    if (stat.size > this.MAX_FILE_SIZE) continue;
+
+                    const contentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
+                    const content = new TextDecoder().decode(contentBytes);
+                    
+                    filesForIndexing.push({ filePath: relativePath, content });
+                    processed++;
+
+                    if (processed % 50 === 0) {
+                        this.postMessage('indexing-status', {
+                            phase: 'reading',
+                            message: `Read ${processed} files...`,
+                            current: processed,
+                            total: allFiles.length
+                        });
+                    }
+                } catch (e) {
+                    // Skip unreadable files
+                }
+            }
+
+            if (filesForIndexing.length === 0) {
+                this.postMessage('indexing-status', { phase: 'error', message: 'No valid files to index' });
+                return;
+            }
+
+            // Generate workspace ID from folder name
+            const workspaceName = workspaceFolder.name || 'default';
+            const workspaceId = crypto.createHash('md5').update(workspaceName).digest('hex').slice(0, 16);
+
+            this.postMessage('indexing-status', {
+                phase: 'embedding',
+                message: `Indexing ${filesForIndexing.length} files into vector database...`,
+                current: 0,
+                total: filesForIndexing.length
+            });
+
+            const result = await indexCodebase(
+                filesForIndexing,
+                workspaceId,
+                (progress: IndexingProgress) => {
+                    this.postMessage('indexing-status', {
+                        phase: progress.phase,
+                        message: progress.message,
+                        current: progress.current,
+                        total: progress.total
+                    });
+                }
+            );
+
+            this._workspaceId = result.workspaceId;
+
+            this.postMessage('indexing-status', {
+                phase: 'complete',
+                message: `Indexed ${result.chunksIndexed} chunks from ${result.filesProcessed} files`,
+                workspaceId: result.workspaceId
+            });
+
+            vscode.window.showInformationMessage(
+                `Platypus Knowledge Base: Indexed ${result.filesProcessed} files (${result.chunksIndexed} chunks)`
+            );
+
+        } catch (e: any) {
+            console.error('Indexing error:', e);
+            this.postMessage('indexing-status', {
+                phase: 'error',
+                message: e.message || 'Failed to index codebase'
+            });
+            vscode.window.showErrorMessage(`Indexing failed: ${e.message}`);
+        }
+    }
+
+    private async handleGetKnowledgeStatus() {
+        if (!this._workspaceId) {
+            this.postMessage('knowledge-status', { indexed: false, chunksCount: 0 });
+            return;
+        }
+
+        try {
+            const status = await getKnowledgeStatus(this._workspaceId);
+            this.postMessage('knowledge-status', status);
+        } catch (e) {
+            this.postMessage('knowledge-status', { indexed: false, chunksCount: 0 });
+        }
+    }
+
+    private shouldSkipFile(filePath: string): boolean {
+        const skipPatterns = [
+            'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+            '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp',
+            '.woff', '.woff2', '.ttf', '.eot',
+            '.zip', '.tar', '.gz', '.rar',
+            '.exe', '.dll', '.so', '.dylib',
+            '.min.js', '.min.css', '.map'
+        ];
+        return skipPatterns.some(pattern => filePath.includes(pattern));
+    }
+
+    /**
+     * Check if a prompt is a simple greeting that doesn't require code processing
+     */
+    private isSimpleGreeting(prompt: string): boolean {
+        const trimmedPrompt = prompt.trim().toLowerCase();
+        const wordCount = trimmedPrompt.split(/\s+/).length;
+        
+        // Very short conversational messages
+        const conversationalPatterns = [
+            /^(hi+|hello+|hey+|hii+|sup|yo)[\s!.?]*$/i,
+            /^(thanks+|thank you+|good (morning|evening|night|afternoon))[\s!.?]*$/i,
+            /^(ok|okay|sure|yes|no|yep|nope|cool|great|awesome|nice)[\s!.?]*$/i,
+            /^(what'?s? up|how are you|who are you|what can you do)[\s!.?]*$/i
+        ];
+        
+        return wordCount <= 5 && conversationalPatterns.some(p => p.test(trimmedPrompt));
+    }
+
+    /**
+     * Auto-index the workspace in background when first analysis is made
+     */
+    private async triggerAutoIndex() {
+        if (this._isAutoIndexing) return;
+        this._isAutoIndexing = true;
+
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            this._isAutoIndexing = false;
+            return;
+        }
+
+        try {
+            // Show subtle status bar message
+            const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+            statusBarItem.text = '$(sync~spin) Platypus: Indexing codebase...';
+            statusBarItem.show();
+
+            const allFiles = await vscode.workspace.findFiles(
+                '**/*',
+                '**/{node_modules,.git,dist,build,out,venv,.next,.vscode,coverage,*.lock}/**'
+            );
+
+            const filesForIndexing: { filePath: string; content: string }[] = [];
+            const MAX_AUTO_INDEX_FILES = 150; // Increased limit for auto-indexing
+
+            for (const fileUri of allFiles) {
+                if (filesForIndexing.length >= MAX_AUTO_INDEX_FILES) break;
+
+                try {
+                    const relativePath = vscode.workspace.asRelativePath(fileUri);
+                    if (this.shouldSkipFile(relativePath)) continue;
+
+                    const stat = await (vscode.workspace as any).fs.stat(fileUri);
+                    if (stat.size > this.MAX_FILE_SIZE) continue;
+
+                    const contentBytes = await (vscode.workspace as any).fs.readFile(fileUri);
+                    const content = new TextDecoder().decode(contentBytes);
+                    filesForIndexing.push({ filePath: relativePath, content });
+                } catch (e) {
+                    // Skip unreadable files
+                }
+            }
+
+            if (filesForIndexing.length > 0) {
+                const workspaceName = workspaceFolder.name || 'default';
+                const workspaceId = crypto.createHash('md5').update(workspaceName).digest('hex').slice(0, 16);
+
+                await indexCodebase(filesForIndexing, workspaceId);
+                this._workspaceId = workspaceId;
+
+                statusBarItem.text = '$(check) Platypus: Indexed';
+                setTimeout(() => statusBarItem.dispose(), 3000);
+            } else {
+                statusBarItem.dispose();
+            }
+        } catch (e) {
+            console.error('Auto-indexing failed:', e);
+        } finally {
+            this._isAutoIndexing = false;
         }
     }
 
@@ -266,22 +547,17 @@ export class PlatypusViewProvider {
     private async handleAnalysisRequest(payload: { prompt: string; selectedFiles: string[] }) {
         if (!this._view) return;
 
-        // Ticket #1: Local Brain check - Instant Greeting
-        const localResponse = checkLocalBrain(payload.prompt);
-        if (localResponse) {
-             this.postMessage('analysis-complete', {
-                reasoning: localResponse.reasoning,
-                changes: localResponse.changes,
-                jobId: 'local-brain'
-            });
-            return;
+        // Only auto-index for non-trivial requests (not simple greetings)
+        const isSimpleGreeting = this.isSimpleGreeting(payload.prompt);
+        if (!isSimpleGreeting && !this._workspaceId && !this._isAutoIndexing) {
+            this.triggerAutoIndex();
         }
 
         this.postMessage('set-loading', true);
-        this.postMessage('update-status', { text: `Indexing workspace and analyzing request...` });
+        this.postMessage('update-status', { text: `Analyzing request...` });
 
         this._activeJobId = crypto.randomUUID();
-        this._jobChecksums.clear(); // Reset checksums for new job
+        this._jobChecksums.clear();
         
         try {
             const allFiles = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out,venv,.*}/**');
@@ -390,7 +666,7 @@ export class PlatypusViewProvider {
     }
 
     public dispose() {
-        while (this._disposables.length) {
+        while (this._disposables.length > 0) {
             const x = this._disposables.pop();
             if (x) { x.dispose(); }
         }

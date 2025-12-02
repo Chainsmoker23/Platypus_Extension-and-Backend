@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ChatInterface } from './components/ChatInterface';
 import Header from './components/Header';
 import { ErrorDisplay } from './components/ErrorDisplay';
+import { KnowledgeBase } from './components/KnowledgeBase';
 import { useVscodeMessageHandler } from './hooks/useVscodeMessageHandler';
 import type { PlatypusMessage, ErrorPayload, ChatMessage, StatusPayload, FileSystemOperation } from './types';
 import { vscodeApi } from './api/vscode';
@@ -11,16 +12,17 @@ const App: React.FC = () => {
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<ErrorPayload | null>(null);
-  const [statusText, setStatusText] = useState<string>('Initializing...');
+  const [statusText, setStatusText] = useState<string>('Ready');
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
-  
+
   useVscodeMessageHandler((event: MessageEvent<PlatypusMessage>) => {
     const message = event.data;
     switch (message.command) {
-      case 'chat-update':
+      case 'chat-update': {
         const messagePayload = message.payload as ChatMessage;
-        setConversation(prev => [...prev, messagePayload]);
+        setConversation((prev) => [...prev, messagePayload]);
         break;
+      }
       case 'progress-update':
         setConversation(prev => prev.map(msg => 
             msg.isLoading 
@@ -57,11 +59,12 @@ const App: React.FC = () => {
         setSelectedFiles(prev => [...new Set([...prev, ...message.payload])]);
         break;
       case 'error':
-        // When an error occurs, remove any pending loading spinners
         setConversation(prev => prev.filter(msg => !msg.isLoading));
         setError(message.payload as ErrorPayload);
         setIsLoading(false);
         setStatusText('Error');
+        break;
+      default:
         break;
     }
   });
@@ -72,7 +75,7 @@ const App: React.FC = () => {
 
   const handlePromptSubmit = useCallback(async (prompt: string, files: string[]) => {
     setError(null);
-    
+
     const userMessage: ChatMessage = { 
         id: `user-${Date.now()}`, 
         role: 'user', 
@@ -88,30 +91,33 @@ const App: React.FC = () => {
 
     setConversation(prev => [...prev, userMessage, loadingMessage]);
     vscodeApi.postMessage({ command: 'submit-prompt', payload: { prompt, selectedFiles: files } });
-    setSelectedFiles([]); // Clear selection after submit
+    setSelectedFiles([]);
   }, []);
 
   const handleCancelChanges = (messageId: string) => {
-    setConversation(prev => prev.map(msg => 
-        msg.id === messageId 
-        ? { ...msg, changes: undefined } 
-        : msg
-    ));
+    setConversation(prev =>
+      prev.map(msg =>
+        msg.id === messageId ? { ...msg, changes: undefined } : msg
+      )
+    );
   };
-  
+
   return (
-    <div className="flex flex-col h-screen bg-copilot-bg text-copilot-text font-sans selection:bg-copilot-blue selection:text-white">
-       <Header />
-       {error && <ErrorDisplay error={error} onDismiss={() => setError(null)} />}
+    <div className="w-full min-h-screen bg-copilot-bg text-copilot-text font-sans flex flex-col">
+      <Header />
+      <KnowledgeBase />
+      {error && <ErrorDisplay error={error} onDismiss={() => setError(null)} />}
+      <main className="flex-1 w-full flex flex-col relative">
         <ChatInterface 
-            conversation={conversation}
-            onSubmit={handlePromptSubmit}
-            isLoading={isLoading}
-            statusText={statusText}
-            selectedFiles={selectedFiles}
-            setSelectedFiles={setSelectedFiles}
-            onCancelChanges={handleCancelChanges}
+          conversation={conversation}
+          onSubmit={handlePromptSubmit}
+          isLoading={isLoading}
+          statusText={statusText}
+          selectedFiles={selectedFiles}
+          setSelectedFiles={setSelectedFiles}
+          onCancelChanges={handleCancelChanges}
         />
+      </main>
     </div>
   );
 };

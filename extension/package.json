@@ -32,7 +32,19 @@
           "type": "webview"
         }
       ]
-    }
+    },
+    "commands": [
+      {
+        "command": "platypus.undoLastChange",
+        "title": "Platypus AI: Undo Last Change",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "platypus.showHistory",
+        "title": "Platypus AI: Show Change History",
+        "icon": "$(history)"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
