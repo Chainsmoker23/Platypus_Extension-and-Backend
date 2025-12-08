@@ -3,7 +3,7 @@ import { PlatypusViewProvider } from './PlatypusViewProvider';
 import { changeHistory } from './utils/changeHistory';
 
 export function activate(context: vscode.ExtensionContext) {
-    const provider = new PlatypusViewProvider(vscode.Uri.file(context.extensionPath));
+    const provider = new PlatypusViewProvider(vscode.Uri.file(context.extensionPath), context);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
@@ -11,6 +11,18 @@ export function activate(context: vscode.ExtensionContext) {
             provider
         )
     );
+
+    // Register New Chat command
+    const newChatCommand = vscode.commands.registerCommand('platypus.newChat', () => {
+        // Send new chat command to the webview
+        provider['postMessage']('trigger-new-chat', {});
+    });
+
+    // Register Toggle History command
+    const toggleHistoryCommand = vscode.commands.registerCommand('platypus.toggleHistory', () => {
+        // Send toggle history command to the webview
+        provider['postMessage']('trigger-toggle-history', {});
+    });
 
     // Auto-index workspace when opened
     if (vscode.workspace.workspaceFolders?.length) {
@@ -45,7 +57,7 @@ export function activate(context: vscode.ExtensionContext) {
         });
     });
 
-    context.subscriptions.push(undoCommand, historyCommand);
+    context.subscriptions.push(undoCommand, historyCommand, newChatCommand, toggleHistoryCommand);
 }
 
 export function deactivate() {}

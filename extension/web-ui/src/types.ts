@@ -29,6 +29,11 @@ export interface ChatMessage {
   changes?: FileSystemOperation[];
   progressLogs?: string[];
   progressSteps?: ProgressStep[]; // Enhanced progress tracking
+  // Intelligent Pipeline data
+  plan?: TaskPlanSummary;
+  executionState?: ExecutionStateSummary;
+  pipelinePhase?: string;
+  pipelineMessage?: string;
 }
 
 // A unified message type for communication between the webview and the extension.
@@ -43,6 +48,8 @@ export interface PlatypusMessage {
       'preview-changes' |
       'index-codebase' |
       'get-knowledge-status' |
+      'close-view' |
+      'new-chat' |
       // Extension -> Webview
       'chat-update' |
       'analysis-complete' |
@@ -52,7 +59,11 @@ export interface PlatypusMessage {
       'update-selected-files' |
       'progress-update' |
       'indexing-status' |
-      'knowledge-status';
+      'knowledge-status' |
+      'trigger-new-chat' |
+      'trigger-toggle-history' |
+      'clear-conversation' |
+      'load-sessions';
     payload?: any;
 }
 
@@ -65,4 +76,57 @@ export interface ErrorPayload {
 
 export interface StatusPayload {
     text: string;
+}
+
+// ============ Intelligent Pipeline Types ============
+
+export interface TaskStep {
+  id: string;
+  filePath: string;
+  description: string;
+  lineHints?: number[];
+  codeReferences?: string[];
+  actionType: 'modify' | 'create' | 'delete' | 'rename' | 'refactor' | 'inspect';
+  priority: number;
+  estimatedComplexity: 'low' | 'medium' | 'high';
+  dependencies?: string[];
+}
+
+export interface TaskPlanSummary {
+  id: string;
+  goal: string;
+  steps: TaskStep[];
+  complexity: 'simple' | 'moderate' | 'complex' | 'very_complex';
+  estimatedTimeSeconds: number;
+}
+
+export interface StepResultSummary {
+  stepId: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+  changesCount: number;
+  error?: string;
+}
+
+export interface ExecutionStateSummary {
+  planId: string;
+  currentStep: number;
+  totalSteps: number;
+  stepResults: StepResultSummary[];
+  status: 'planning' | 'executing' | 'paused' | 'completed' | 'failed' | 'awaiting_confirmation';
+  elapsedTimeMs: number;
+  estimatedRemainingMs: number;
+}
+
+export interface AgentProgressEvent {
+  type: 'planning' | 'step' | 'verification' | 'reflection' | 'complete' | 'error' | 'awaiting_user';
+  phase?: string;
+  stepId?: string;
+  stepDescription?: string;
+  currentStep?: number;
+  totalSteps?: number;
+  message: string;
+  changes?: FileSystemOperation[];
+  plan?: TaskPlanSummary;
+  state?: ExecutionStateSummary;
+  requiresConfirmation?: boolean;
 }

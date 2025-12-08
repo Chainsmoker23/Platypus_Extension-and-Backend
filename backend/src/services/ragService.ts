@@ -53,6 +53,13 @@ export async function indexCodebase(
     const allChunks: CodeChunk[] = [];
     let filesProcessed = 0;
 
+    onProgress?.({
+        phase: 'chunking',
+        current: 0,
+        total: files.length,
+        message: `Starting to process ${files.length} files...`,
+    });
+
     for (const file of files) {
         const chunks = chunkFile(file);
         allChunks.push(...chunks);
@@ -64,6 +71,16 @@ export async function indexCodebase(
             total: files.length,
             message: `Chunked ${file.filePath} (${chunks.length} chunks)`,
         });
+        
+        // Add more detailed progress for large file sets
+        if (files.length > 50 && filesProcessed % Math.ceil(files.length / 10) === 0) {
+            onProgress?.({
+                phase: 'chunking',
+                current: filesProcessed,
+                total: files.length,
+                message: `Processed ${filesProcessed}/${files.length} files (${Math.round((filesProcessed/files.length)*100)}%)`,
+            });
+        }
     }
 
     if (allChunks.length === 0) {
@@ -83,6 +100,13 @@ export async function indexCodebase(
     );
 
     // Generate embeddings with progress tracking
+    onProgress?.({
+        phase: 'embedding',
+        current: 0,
+        total: textsToEmbed.length,
+        message: `Starting to generate embeddings for ${textsToEmbed.length} chunks...`,
+    });
+    
     const embeddings = await embedding.generateEmbeddings(
         textsToEmbed,
         (processed, total) => {
@@ -92,6 +116,16 @@ export async function indexCodebase(
                 total,
                 message: `Generated ${processed}/${total} embeddings`,
             });
+            
+            // Add more detailed progress for large embedding sets
+            if (total > 100 && processed % Math.ceil(total / 10) === 0) {
+                onProgress?.({
+                    phase: 'embedding',
+                    current: processed,
+                    total,
+                    message: `Embedding progress: ${processed}/${total} (${Math.round((processed/total)*100)}%)`,
+                });
+            }
         }
     );
 
@@ -102,8 +136,31 @@ export async function indexCodebase(
         message: 'Storing embeddings in vector database...',
     });
 
-    // Store in Qdrant
-    await qdrant.upsertChunks(workspaceId, allChunks, embeddings);
+    onProgress?.({
+        phase: 'storing',
+        current: 0,
+        total: allChunks.length,
+        message: `Storing ${allChunks.length} chunks in vector database...`,
+    });
+    
+    // Store in Qdrant with progress updates
+    let storedChunks = 0;
+    const batchSize = 50; // Process in batches
+    
+    for (let i = 0; i < allChunks.length; i += batchSize) {
+        const batchChunks = allChunks.slice(i, i + batchSize);
+        const batchEmbeddings = embeddings.slice(i, i + batchSize);
+        
+        await qdrant.upsertChunks(workspaceId, batchChunks, batchEmbeddings);
+        storedChunks += batchChunks.length;
+        
+        onProgress?.({
+            phase: 'storing',
+            current: storedChunks,
+            total: allChunks.length,
+            message: `Stored ${storedChunks}/${allChunks.length} chunks (${Math.round((storedChunks/allChunks.length)*100)}%)`,
+        });
+    }
 
     onProgress?.({
         phase: 'complete',

@@ -42,7 +42,7 @@ const workspaceUtils_1 = require("./utils/workspaceUtils");
 const backendApi_1 = require("./utils/backendApi");
 const diffApplier_1 = require("./utils/diffApplier");
 class PlatypusViewProvider {
-    constructor(_extensionUri) {
+    constructor(_extensionUri, context) {
         this._extensionUri = _extensionUri;
         this._disposables = [];
         this._activeJobId = null;
@@ -52,6 +52,9 @@ class PlatypusViewProvider {
         this._conversationHistory = [];
         this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         this.MAX_FILE_SIZE = 200 * 1024; // Increased to 200KB
+        this._sessions = new Map();
+        this._currentSessionId = `session-${Date.now()}`;
+        this._hasUnsavedChanges = false;
         this.handleAttachFiles = async () => {
             const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
             if (!workspaceFolder) {
@@ -136,18 +139,19 @@ class PlatypusViewProvider {
                 status.dispose();
             }
         };
-        // Load conversation history from global state on initialization
+        this._context = context;
+        // Load conversation history and sessions from global state
         this.loadConversationHistory();
+        this.loadSessions();
     }
     /**
      * Load conversation history from VS Code global state
      */
     loadConversationHistory() {
         try {
-            const savedHistory = vscode.workspace
-                .getConfiguration()
-                .get(PlatypusViewProvider.CONVERSATION_HISTORY_KEY, []);
+            const savedHistory = this._context.globalState.get(PlatypusViewProvider.CONVERSATION_HISTORY_KEY, []);
             this._conversationHistory = savedHistory || [];
+            console.log(`[Platypus] Loaded ${this._conversationHistory.length} messages from history`);
         }
         catch (e) {
             console.error('Failed to load conversation history:', e);
@@ -155,16 +159,48 @@ class PlatypusViewProvider {
         }
     }
     /**
+     * Load all chat sessions from VS Code global state
+     */
+    loadSessions() {
+        try {
+            const savedSessions = this._context.globalState.get(PlatypusViewProvider.SESSIONS_KEY, []);
+            this._sessions = new Map(savedSessions.map((s) => [s.id, s]));
+            const currentSessionId = this._context.globalState.get(PlatypusViewProvider.CURRENT_SESSION_KEY);
+            if (currentSessionId) {
+                this._currentSessionId = currentSessionId;
+            }
+            console.log(`[Platypus] Loaded ${this._sessions.size} sessions`);
+        }
+        catch (e) {
+            console.error('Failed to load sessions:', e);
+            this._sessions = new Map();
+        }
+    }
+    /**
      * Save conversation history to VS Code global state
      */
-    saveConversationHistory() {
+    async saveConversationHistory() {
         try {
-            vscode.workspace
-                .getConfiguration()
-                .update(PlatypusViewProvider.CONVERSATION_HISTORY_KEY, this._conversationHistory, vscode.ConfigurationTarget.Global);
+            await this._context.globalState.update(PlatypusViewProvider.CONVERSATION_HISTORY_KEY, this._conversationHistory);
+            this._hasUnsavedChanges = false;
+            console.log(`[Platypus] Saved ${this._conversationHistory.length} messages to history`);
         }
         catch (e) {
             console.error('Failed to save conversation history:', e);
+        }
+    }
+    /**
+     * Save all sessions to VS Code global state
+     */
+    async saveSessions() {
+        try {
+            const sessionsArray = Array.from(this._sessions.values());
+            await this._context.globalState.update(PlatypusViewProvider.SESSIONS_KEY, sessionsArray);
+            await this._context.globalState.update(PlatypusViewProvider.CURRENT_SESSION_KEY, this._currentSessionId);
+            console.log(`[Platypus] Saved ${this._sessions.size} sessions`);
+        }
+        catch (e) {
+            console.error('Failed to save sessions:', e);
         }
     }
     resolveWebviewView(webviewView) {
@@ -189,8 +225,28 @@ class PlatypusViewProvider {
     postChatMessage(message) {
         // Add to conversation history
         this._conversationHistory = [...this._conversationHistory, message];
-        // Save conversation history
+        this._hasUnsavedChanges = true;
+        // Auto-save every message
         this.saveConversationHistory();
+        // Update current session
+        const currentSession = this._sessions.get(this._currentSessionId);
+        if (currentSession) {
+            currentSession.messages = this._conversationHistory;
+            currentSession.timestamp = Date.now();
+            this._sessions.set(this._currentSessionId, currentSession);
+            this.saveSessions();
+        }
+        else {
+            // Create new session
+            const title = this._conversationHistory.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
+            this._sessions.set(this._currentSessionId, {
+                id: this._currentSessionId,
+                title,
+                timestamp: Date.now(),
+                messages: this._conversationHistory
+            });
+            this.saveSessions();
+        }
         // Send to webview
         this.postMessage('chat-update', message);
     }
@@ -202,6 +258,12 @@ class PlatypusViewProvider {
                 // Send conversation history first
                 this._conversationHistory.forEach(message => {
                     this.postMessage('chat-update', message);
+                });
+                // Send all sessions to webview
+                const sessionsArray = Array.from(this._sessions.values());
+                this.postMessage('load-sessions', {
+                    sessions: sessionsArray,
+                    currentSessionId: this._currentSessionId
                 });
                 // Then send welcome message if conversation is empty
                 if (this._conversationHistory.length === 0) {
@@ -289,6 +351,47 @@ class PlatypusViewProvider {
                 break;
             case 'get-knowledge-status':
                 await this.handleGetKnowledgeStatus();
+                break;
+            case 'close-view':
+                // Check for unsaved changes
+                if (this._hasUnsavedChanges || this._conversationHistory.length > 0) {
+                    const choice = await vscode.window.showWarningMessage('You have unsaved conversation. Do you want to save it before closing?', { modal: true }, 'Save & Close', 'Close Without Saving', 'Stay');
+                    if (choice === 'Save & Close') {
+                        await this.saveConversationHistory();
+                        await this.saveSessions();
+                        console.log('[Platypus] Conversation saved before closing');
+                    }
+                    else if (choice === 'Stay') {
+                        // Don't close, just return
+                        return;
+                    }
+                    // If "Close Without Saving", continue without saving
+                }
+                break;
+            case 'new-chat':
+                // Check for unsaved changes
+                if (this._hasUnsavedChanges && this._conversationHistory.length > 0) {
+                    const choice = await vscode.window.showWarningMessage('You have unsaved conversation. Save before starting a new chat?', { modal: true }, 'Save & New Chat', 'New Chat Without Saving', 'Cancel');
+                    if (choice === 'Cancel') {
+                        return;
+                    }
+                    if (choice === 'Save & New Chat') {
+                        await this.saveConversationHistory();
+                        await this.saveSessions();
+                    }
+                }
+                // Create new session
+                this._currentSessionId = `session-${Date.now()}`;
+                this._conversationHistory = [];
+                this._hasUnsavedChanges = false;
+                // Send clear message to webview
+                this.postMessage('clear-conversation', {});
+                // Send welcome message
+                this.postChatMessage({
+                    id: crypto.randomUUID(),
+                    role: 'ai',
+                    content: 'New chat started. How can I help you?',
+                });
                 break;
         }
     }
@@ -629,6 +732,8 @@ class PlatypusViewProvider {
 exports.PlatypusViewProvider = PlatypusViewProvider;
 // State management
 PlatypusViewProvider.CONVERSATION_HISTORY_KEY = 'platypus.conversationHistory';
+PlatypusViewProvider.SESSIONS_KEY = 'platypus.chatSessions';
+PlatypusViewProvider.CURRENT_SESSION_KEY = 'platypus.currentSession';
 function getNonce() {
     let text = '';
     const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

@@ -1,0 +1,14 @@
+{
+    "gemini": [
+        "your-gemini-api-key-1",
+        "your-gemini-api-key-2",
+        "your-gemini-api-key-3"
+    ],
+    "openai": [
+        "your-openai-api-key-1",
+        "your-openai-api-key-2"
+    ],
+    "anthropic": [
+        "your-anthropic-api-key-1"
+    ]
+}

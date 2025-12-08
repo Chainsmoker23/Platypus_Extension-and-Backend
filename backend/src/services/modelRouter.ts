@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import apiKeyPool from './apiKeyPool';
 
 /**
  * Detect if an error is a rate limit error
@@ -154,30 +155,80 @@ export function routePrompt(prompt: string, hasSelectedFiles: boolean = false): 
 }
 
 /**
- * Get a client for the appropriate model
+ * Get a client for the appropriate model with automatic failover
  */
 export function getModelClient(tier: ModelTier = 'standard'): { client: GoogleGenAI; model: string } {
-    const apiKey = process.env.AGENT_API_KEY || process.env.GEMINI_KEYS?.split(',')[0];
-    if (!apiKey) {
-        throw new Error('No API key configured');
+    // Use the API Key Pool for automatic failover
+    const key = apiKeyPool.getNextKey('gemini');
+    if (!key) {
+        // Fallback to environment variable
+        const apiKey = process.env.AGENT_API_KEY || process.env.GEMINI_KEYS?.split(',')[0];
+        if (!apiKey) {
+            throw new Error('No API key configured');
+        }
+        const client = new GoogleGenAI({ apiKey: apiKey.trim() });
+        return { client, model: getModelForTier(tier) };
     }
     
-    const client = new GoogleGenAI({ apiKey: apiKey.trim() });
-    
+    const client = new GoogleGenAI({ apiKey: key });
+    return { client, model: getModelForTier(tier) };
+}
+
+/**
+ * Get model name for a tier
+ */
+function getModelForTier(tier: ModelTier): string {
     switch (tier) {
         case 'lite':
-            return { client, model: MODELS.FLASH_LITE };
+            return MODELS.FLASH_LITE;
         case 'preview':
-            return { client, model: MODELS.PREVIEW };
+            return MODELS.PREVIEW;
         case 'reasoning':
-            return { client, model: MODELS.REASONING };
+            return MODELS.REASONING;
         default:
-            return { client, model: MODELS.FLASH };
+            return MODELS.FLASH;
     }
 }
 
 /**
- * Quick response for simple conversational queries
+ * Execute a model call with automatic failover across API keys
+ */
+export async function executeWithFailover<T>(
+    tier: ModelTier,
+    fn: (client: GoogleGenAI, model: string) => Promise<T>,
+    maxRetries: number = 5
+): Promise<T> {
+    let lastError: any;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const { client, model } = getModelClient(tier);
+        const key = apiKeyPool.getNextKey('gemini');
+        
+        try {
+            const result = await fn(client, model);
+            if (key) apiKeyPool.reportSuccess(key);
+            return result;
+        } catch (error: any) {
+            lastError = error;
+            if (key) apiKeyPool.reportError(key, error);
+            
+            console.log(`[ModelRouter] Attempt ${attempt + 1} failed, trying next key...`);
+            
+            // If not a retryable error, throw immediately
+            if (!isRateLimitError(error) && error.status !== 503 && error.status !== 500) {
+                throw error;
+            }
+            
+            // Small delay before retry
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    }
+    
+    throw lastError || new Error('All API keys exhausted');
+}
+
+/**
+ * Quick response for simple conversational queries with failover
  */
 export async function quickConversationalResponse(prompt: string): Promise<string | null> {
     const routing = routePrompt(prompt);
@@ -187,41 +238,17 @@ export async function quickConversationalResponse(prompt: string): Promise<strin
     }
     
     try {
-        const { client, model } = getModelClient('lite');
-        
-        // Retry logic with exponential backoff for rate limiting
-        let attempts = 0;
-        const maxAttempts = 3;
-        let response: any;
-        
-        while (attempts < maxAttempts) {
-            try {
-                response = await client.models.generateContent({
-                    model,
-                    contents: `You are Platypus, a friendly AI coding assistant. Respond briefly and warmly to: "${prompt}"`,
-                    config: {
-                        maxOutputTokens: 150,
-                        temperature: 0.7,
-                    },
-                });
-                break; // Success, exit retry loop
-                
-            } catch (error: any) {
-                attempts++;
-                if (attempts >= maxAttempts || !isRateLimitError(error)) {
-                    throw error;
-                }
-                
-                // Exponential backoff
-                const delay = Math.pow(2, attempts) * 1000;
-                console.log(`[ModelRouter] Rate limited, retrying in ${delay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-        }
-        
-        if (attempts >= maxAttempts) {
-            throw new Error('Max retries exceeded for quick response');
-        }
+        // Use executeWithFailover for automatic key rotation
+        const response = await executeWithFailover('lite', async (client, model) => {
+            return await client.models.generateContent({
+                model,
+                contents: `You are Platypus, a friendly AI coding assistant. Respond briefly and warmly to: "${prompt}"`,
+                config: {
+                    maxOutputTokens: 150,
+                    temperature: 0.7,
+                },
+            });
+        });
         
         return response.text || null;
     } catch (e) {

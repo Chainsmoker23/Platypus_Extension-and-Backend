@@ -78,6 +78,11 @@ async function callBackend(prompt, files, jobId, selectedFilePaths, diagnostics,
                         if (onProgress)
                             onProgress(msg.message);
                     }
+                    else if (msg.type === 'progress-detailed') {
+                        // Handle enhanced progress updates
+                        if (onProgress)
+                            onProgress(msg.data.message);
+                    }
                     else if (msg.type === 'result') {
                         finalResult = msg.data;
                     }

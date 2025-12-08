@@ -3,6 +3,9 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { runAgent } from '../agent/agent';
 import { handleConversation } from '../services/smartChat';
+import logger from '../utils/logger';
+import errorHandler from '../utils/errorHandler';
+import { ProgressTracker } from '../utils/progressTracker';
 
 const analysisSchema = z.object({
   prompt: z.string().min(1),
@@ -37,6 +40,15 @@ export const handleAnalysisRequest = async (req: Request, res: Response) => {
   const writeProgress = (message: string) => {
     (res as any).write(JSON.stringify({ type: 'progress', message }) + '\n');
   };
+  
+  // Enhanced progress tracker for detailed updates
+  const progressTracker = new ProgressTracker((update) => {
+    // Send structured progress updates
+    (res as any).write(JSON.stringify({ 
+      type: 'progress-detailed', 
+      data: update 
+    }) + '\n');
+  });
 
   try {
     console.log(`[${requestId}] analyze: ${prompt.slice(0, 120)}... (${files.length} files)`);
@@ -57,12 +69,12 @@ export const handleAnalysisRequest = async (req: Request, res: Response) => {
     }
     
     // For non-conversational prompts, proceed with full analysis
-    writeProgress('Analyzing workspace structure...');
-    writeProgress('Planning changes...');
+    progressTracker.initializing('Analyzing workspace structure...');
+    progressTracker.analyzing('Planning changes...', 0, 100);
     
     // More detailed progress updates
     const progressInterval = setInterval(() => {
-      writeProgress('Still working on your request...');
+      progressTracker.searching('Still working on your request...');
     }, 5000);
 
     const result = await runAgent({
@@ -72,7 +84,11 @@ export const handleAnalysisRequest = async (req: Request, res: Response) => {
       diagnostics,
       workspaceId,
       model, // Pass model selection
-      onProgress: writeProgress,
+      onProgress: (message: string) => {
+        // Send both legacy and enhanced progress updates
+        writeProgress(message);
+        progressTracker.generating(message);
+      },
     });
     
     clearInterval(progressInterval);
@@ -80,10 +96,22 @@ export const handleAnalysisRequest = async (req: Request, res: Response) => {
     (res as any).write(JSON.stringify({ type: 'result', data: result }) + '\n');
     (res as any).end();
   } catch (error: any) {
-    console.error(`[${requestId}] Agent error`, error);
+    const log = logger.child(requestId);
+    const appError = errorHandler.handleError(error, requestId);
+    
+    log.error('Agent error', error, {
+      prompt: prompt.slice(0, 100),
+      filesCount: files.length,
+      errorCode: appError.code
+    });
+    
     (res as any).write(JSON.stringify({
       type: 'error',
-      error: { message: error?.message || 'Agent failed' },
+      error: { 
+        message: appError.userMessage,
+        code: appError.code,
+        isRetryable: appError.isRetryable
+      },
     }) + '\n');
     (res as any).end();
   }

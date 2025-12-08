@@ -1,9 +1,13 @@
 import { GoogleGenAI, Schema, Type } from '@google/genai';
-import type { FileSystemOperation, AnalysisResult } from '../types';
+import type { FileSystemOperation, AnalysisResult, AgentProgressEvent, TaskPlanSummary, ExecutionStateSummary } from '../types';
 import { getContextForPrompt } from '../services/ragService';
 import { routePrompt, getModelClient } from '../services/modelRouter';
 import { handleConversation } from '../services/smartChat';
 import { AdvancedReasoningEngine } from '../services/advancedReasoningEngine';
+import { DeepReasoningEngine } from '../services/deepReasoningEngine';
+import { TaskPlannerModule, TaskPlan } from '../services/taskPlannerModule';
+import { OrchestratorService, OrchestratorProgress } from '../services/orchestratorService';
+import apiKeyPool from '../services/apiKeyPool';
 
 type AgentInput = {
   prompt: string;
@@ -12,7 +16,9 @@ type AgentInput = {
   diagnostics: string[];
   workspaceId?: string;
   model?: string; // Manual model override
+  useIntelligentPipeline?: boolean; // Enable Task Planner + Orchestrator
   onProgress?: (msg: string) => void;
+  onProgressEvent?: (event: AgentProgressEvent) => void; // Enhanced progress events
 };
 
 const MAX_RETRIES = 2;
@@ -125,7 +131,64 @@ async function autoCorrectCode(
 }
 
 export async function runAgent(input: AgentInput): Promise<AnalysisResult> {
-  const { prompt, files, selectedFilePaths, diagnostics, workspaceId, model, onProgress } = input;
+  const { prompt, files, selectedFilePaths, diagnostics, workspaceId, model, useIntelligentPipeline, onProgress, onProgressEvent } = input;
+
+  // ============ NEW: Intelligent Pipeline (Cursor-like) ============
+  // Check if we should use the intelligent Task Planner + Orchestrator pipeline
+  const shouldUseIntelligentPipeline = 
+    useIntelligentPipeline || // Explicitly requested
+    model === 'intelligent' || model === 'cursor' || // Model override
+    selectedFilePaths.length > 3 || // Multi-file operations
+    files.length > 20 || // Large codebase
+    diagnostics.length > 2 || // Multiple errors to fix
+    prompt.toLowerCase().includes('fix') ||
+    prompt.toLowerCase().includes('refactor') ||
+    prompt.toLowerCase().includes('implement') ||
+    prompt.toLowerCase().includes('add feature') ||
+    prompt.toLowerCase().includes('across') || // "across all files"
+    prompt.length > 200; // Complex request
+
+  if (shouldUseIntelligentPipeline) {
+    onProgress?.('🧠 Activating Intelligent Pipeline (Cursor-like processing)...');
+    onProgressEvent?.({
+      type: 'planning',
+      message: 'Activating Intelligent Pipeline for comprehensive analysis...',
+    });
+
+    try {
+      return await runIntelligentPipeline(input);
+    } catch (error: any) {
+      onProgress?.('Intelligent pipeline encountered an issue, falling back to standard processing...');
+      console.warn('[Agent] Intelligent pipeline failed:', error);
+      // Fall through to existing processing methods
+    }
+  }
+
+  // Check if deep reasoning mode is requested (for complex tasks)
+  const useDeepReasoning = model === 'reasoning' || model === 'deep' || 
+    prompt.toLowerCase().includes('understand') ||
+    prompt.toLowerCase().includes('analyze deeply') ||
+    prompt.toLowerCase().includes('figure out') ||
+    selectedFilePaths.length > 5 || // Complex multi-file operations
+    files.length > 30; // Large codebase
+
+  if (useDeepReasoning) {
+    onProgress?.('Activating Deep Reasoning Engine for comprehensive analysis...');
+    
+    // Use the Deep Reasoning Engine for intelligent processing
+    const deepEngine = new DeepReasoningEngine(
+      model === 'reasoning' ? 'gemini-2.5-pro' : 'gemini-2.5-flash',
+      onProgress
+    );
+    
+    try {
+      return await deepEngine.process(prompt, files, selectedFilePaths, diagnostics);
+    } catch (error: any) {
+      onProgress?.('Deep reasoning failed, falling back to standard processing...');
+      console.warn('[Agent] Deep reasoning failed:', error);
+      // Fall through to standard processing
+    }
+  }
 
   // Step 1: Route to appropriate model based on complexity or manual override
   let routing;
@@ -159,9 +222,12 @@ export async function runAgent(input: AgentInput): Promise<AnalysisResult> {
       ragContext = await getContextForPrompt(workspaceId, prompt, 10);
       if (ragContext) {
         onProgress?.('Found relevant context from indexed codebase.');
+      } else {
+        onProgress?.('No relevant context found in knowledge base.');
       }
     } catch (e) {
       console.warn('[Agent] RAG context retrieval failed:', e);
+      onProgress?.('Failed to search knowledge base.');
     }
   }
 
@@ -172,6 +238,8 @@ export async function runAgent(input: AgentInput): Promise<AnalysisResult> {
     dependencyContext = analyzeDependencies(selectedFilePaths, files);
     if (dependencyContext) {
       onProgress?.('Identified related files and dependencies.');
+    } else {
+      onProgress?.('No cross-file dependencies found.');
     }
   }
 
@@ -182,10 +250,22 @@ export async function runAgent(input: AgentInput): Promise<AnalysisResult> {
   }));
 
   onProgress?.('Processing ' + limitedFiles.length + ' files from workspace...');
-
-  const fileContext = limitedFiles
-    .map(f => 'File: ' + f.filePath + '\n```\n' + f.content + '\n```')
-    .join('\n\n');
+  
+  // Process files with progress updates
+  let processedFiles = 0;
+  const fileContextParts: string[] = [];
+  
+  for (const file of limitedFiles) {
+    fileContextParts.push('File: ' + file.filePath + '\n```\n' + file.content + '\n```');
+    processedFiles++;
+    
+    // Update progress every 10 files
+    if (processedFiles % 10 === 0 || processedFiles === limitedFiles.length) {
+      onProgress?.(`Processed ${processedFiles}/${limitedFiles.length} files`);
+    }
+  }
+  
+  const fileContext = fileContextParts.join('\n\n');
 
   const diagContext = diagnostics && diagnostics.length
     ? 'IMPORTANT - Current errors in workspace:\n' + diagnostics.join('\n') + '\n\nYou MUST fix these errors.\n\n'
@@ -291,6 +371,7 @@ export async function runAgent(input: AgentInput): Promise<AnalysisResult> {
     } catch (error: any) {
       attempts++;
       if (attempts >= maxAttempts || !isRateLimitError(error)) {
+        onProgress?.('Failed to generate code changes.');
         throw error;
       }
       
@@ -303,8 +384,11 @@ export async function runAgent(input: AgentInput): Promise<AnalysisResult> {
   }
   
   if (attempts >= maxAttempts) {
+    onProgress?.('Max retries exceeded for code generation');
     throw new Error('Max retries exceeded for code generation');
   }
+  
+  onProgress?.('Code generation completed, processing response...');
 
   const raw = response.text || '{}';
   let parsed: AnalysisResult;
@@ -419,4 +503,208 @@ function analyzeDependencies(selectedFiles: string[], allFiles: { filePath: stri
   const depsList = uniqueDeps.map(dep => `- ${dep}`).join('\n');
   
   return '\n## Cross-File Dependencies Detected\n\nThe following files are related to your selected files and may need coordinated changes:\n' + depsList + '\n\nConsider making changes to these files as well to maintain consistency.\n';
+}
+
+/**
+ * ============ INTELLIGENT PIPELINE ============
+ * 
+ * This is the Cursor-like intelligent processing pipeline that:
+ * 1. Creates a structured task plan BEFORE making any changes
+ * 2. Executes changes incrementally, one file at a time
+ * 3. Verifies each change and reflects/retries on failures
+ * 4. Reports detailed progress throughout the process
+ */
+async function runIntelligentPipeline(input: AgentInput): Promise<AnalysisResult> {
+  const { prompt, files, selectedFilePaths, diagnostics, workspaceId, model, onProgress, onProgressEvent } = input;
+
+  // Determine which model to use
+  const modelName = model === 'intelligent' || model === 'cursor' 
+    ? 'gemini-2.5-flash' 
+    : model === 'reasoning' || model === 'preview'
+      ? 'gemini-2.5-pro'
+      : 'gemini-2.5-flash';
+
+  // ============ PHASE 1: Task Planning ============
+  onProgress?.('📋 Phase 1: Creating execution plan...');
+  onProgressEvent?.({
+    type: 'planning',
+    phase: 'intent',
+    message: 'Analyzing your request and understanding intent...',
+  });
+
+  const planner = new TaskPlannerModule(modelName, (progress) => {
+    onProgress?.(`  → ${progress.message}`);
+    onProgressEvent?.({
+      type: 'planning',
+      phase: progress.phase,
+      message: progress.message,
+    });
+  });
+
+  let plan: TaskPlan;
+  try {
+    plan = await planner.createPlan(
+      prompt,
+      files,
+      diagnostics,
+      workspaceId,
+      selectedFilePaths
+    );
+
+    onProgress?.(`✅ Plan created: ${plan.steps.length} steps, ${plan.complexity} complexity`);
+    onProgress?.(`   Goal: ${plan.goal}`);
+    onProgress?.(`   Estimated time: ${Math.ceil(plan.estimated_effort_seconds / 60)} minute(s)`);
+    
+    // Log the plan steps
+    for (let i = 0; i < plan.steps.length; i++) {
+      const step = plan.steps[i];
+      onProgress?.(`   Step ${i + 1}: [${step.actionType}] ${step.filePath} - ${step.description.slice(0, 60)}...`);
+    }
+
+    const planSummary: TaskPlanSummary = {
+      id: plan.id,
+      goal: plan.goal,
+      steps: plan.steps,
+      complexity: plan.complexity,
+      estimatedTimeSeconds: plan.estimated_effort_seconds,
+    };
+
+    onProgressEvent?.({
+      type: 'planning',
+      phase: 'complete',
+      message: `Plan created with ${plan.steps.length} steps`,
+      plan: planSummary,
+    });
+
+  } catch (error: any) {
+    console.error('[Agent] Task planning failed:', error);
+    onProgress?.('❌ Failed to create execution plan, falling back to standard processing');
+    throw error;
+  }
+
+  // ============ PHASE 2: Orchestrated Execution ============
+  onProgress?.('\n🚀 Phase 2: Executing plan step by step...');
+  onProgressEvent?.({
+    type: 'step',
+    message: 'Starting incremental execution...',
+    currentStep: 0,
+    totalSteps: plan.steps.length,
+  });
+
+  const orchestrator = new OrchestratorService(modelName, (progress: OrchestratorProgress) => {
+    // Convert orchestrator progress to agent progress
+    const stepInfo = progress.currentStep && progress.totalSteps
+      ? `[${progress.currentStep}/${progress.totalSteps}]`
+      : '';
+
+    switch (progress.phase) {
+      case 'step_start':
+        onProgress?.(`\n📂 ${stepInfo} Starting: ${progress.stepDescription}`);
+        break;
+      case 'step_reading':
+        onProgress?.(`   📖 Reading file: ${progress.message}`);
+        break;
+      case 'step_generating':
+        onProgress?.(`   ✏️  Generating changes...`);
+        break;
+      case 'step_verifying':
+        onProgress?.(`   🔍 Verifying changes...`);
+        break;
+      case 'step_complete':
+        onProgress?.(`   ✅ Completed: ${progress.changes?.length || 0} change(s)`);
+        break;
+      case 'reflection':
+        onProgress?.(`   🤔 Reflecting on issues: ${progress.message}`);
+        break;
+      case 'retry':
+        onProgress?.(`   🔄 Retrying: ${progress.message}`);
+        break;
+      case 'error':
+        onProgress?.(`   ❌ Error: ${progress.message}`);
+        break;
+      case 'complete':
+        onProgress?.(`\n✅ ${progress.message}`);
+        break;
+    }
+
+    // Map to AgentProgressEvent
+    const eventType: AgentProgressEvent['type'] = 
+      progress.phase === 'step_verifying' ? 'verification' :
+      progress.phase === 'reflection' ? 'reflection' :
+      progress.phase === 'error' ? 'error' :
+      progress.phase === 'complete' ? 'complete' : 'step';
+
+    const stateSummary: ExecutionStateSummary | undefined = progress.state ? {
+      planId: progress.state.planId,
+      currentStep: progress.state.currentStepIndex + 1,
+      totalSteps: progress.state.totalSteps,
+      stepResults: progress.state.stepResults.map(r => ({
+        stepId: r.stepId,
+        status: r.status,
+        changesCount: r.changes?.length || 0,
+        error: r.error,
+      })),
+      status: progress.state.status,
+      elapsedTimeMs: progress.state.elapsedTimeMs,
+      estimatedRemainingMs: progress.state.estimatedRemainingMs,
+    } : undefined;
+
+    onProgressEvent?.({
+      type: eventType,
+      phase: progress.phase,
+      stepId: progress.stepId,
+      stepDescription: progress.stepDescription,
+      currentStep: progress.currentStep,
+      totalSteps: progress.totalSteps,
+      message: progress.message,
+      changes: progress.changes,
+      state: stateSummary,
+    });
+  });
+
+  try {
+    const result = await orchestrator.executePlan(plan, files, diagnostics);
+
+    // Add plan info to result
+    const finalResult: AnalysisResult = {
+      ...result,
+      plan: {
+        id: plan.id,
+        goal: plan.goal,
+        steps: plan.steps,
+        complexity: plan.complexity,
+        estimatedTimeSeconds: plan.estimated_effort_seconds,
+      },
+    };
+
+    // Final summary
+    onProgress?.('\n' + '='.repeat(50));
+    onProgress?.('📊 EXECUTION SUMMARY');
+    onProgress?.('='.repeat(50));
+    onProgress?.(`   Total changes: ${result.changes.length}`);
+    onProgress?.(`   Files modified: ${new Set(result.changes.map(c => c.filePath)).size}`);
+    
+    const state = orchestrator.getState();
+    if (state) {
+      const completedSteps = state.stepResults.filter(r => r.status === 'completed').length;
+      const failedSteps = state.stepResults.filter(r => r.status === 'failed').length;
+      onProgress?.(`   Steps completed: ${completedSteps}/${state.totalSteps}`);
+      if (failedSteps > 0) {
+        onProgress?.(`   Steps failed: ${failedSteps}`);
+      }
+      onProgress?.(`   Total time: ${Math.round(state.elapsedTimeMs / 1000)}s`);
+    }
+    onProgress?.('='.repeat(50));
+
+    return finalResult;
+
+  } catch (error: any) {
+    console.error('[Agent] Orchestrator execution failed:', error);
+    onProgress?.('❌ Execution failed: ' + error.message);
+    onProgressEvent?.({
+      type: 'error',
+      message: 'Execution failed: ' + error.message,
+    });
+    throw error;
+  }
 }

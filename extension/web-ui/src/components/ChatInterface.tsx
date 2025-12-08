@@ -3,7 +3,8 @@ import { vscodeApi } from '../api/vscode';
 import type { ChatMessage, FileSystemOperation } from '../types';
 import { VscAttachment, VscSend, VscClose, VscCheck, VscLoading, VscFile } from './icons';
 import { ChangeSetViewer } from './ChangeSetViewer';
-import { StreamingProgress } from './StreamingProgress';
+import { EnhancedStreamingProgress } from './EnhancedStreamingProgress';
+import { IntelligentPipelineProgress } from './IntelligentPipelineProgress';
 import ReactMarkdown from 'react-markdown';
 import './ChatInput.css';
 
@@ -88,12 +89,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </div>
 
               {/* Progress Logs (Enhanced Streaming UI) */}
-              {msg.progressLogs && msg.progressLogs.length > 0 && (
-                <StreamingProgress 
+              {msg.progressLogs && msg.progressLogs.length > 0 && !msg.plan && (
+                <EnhancedStreamingProgress 
                   progressLogs={msg.progressLogs}
                   isLoading={msg.isLoading || false}
                   changes={msg.changes}
                 />
+              )}
+
+              {/* Intelligent Pipeline Progress (Cursor-like) */}
+              {(msg.plan || msg.pipelinePhase) && (
+                <div className="mt-4">
+                  <IntelligentPipelineProgress
+                    plan={msg.plan}
+                    state={msg.executionState}
+                    currentPhase={msg.pipelinePhase}
+                    currentMessage={msg.pipelineMessage}
+                    isLoading={msg.isLoading || false}
+                  />
+                </div>
               )}
 
               {/* Loading indicator */}
@@ -140,15 +154,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       {/* Input Area */}
       <div className="chat-input-container">
-        {/* Selected files chips */}
+        {/* Selected files chips - Native style */}
         {selectedFiles.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-2 max-w-full overflow-auto">
+          <div className="flex flex-wrap gap-1.5 mb-2 max-w-full overflow-auto">
             {selectedFiles.map(file => (
-              <div key={file} className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-cyan-900/30 to-blue-900/30 border border-cyan-500/30 text-cyan-300 text-xs rounded-xl shadow-md backdrop-blur-sm">
-                <VscFile className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="truncate max-w-[140px]">{file}</span>
-                <button onClick={() => onRemoveFile(file)} className="ml-1 text-gray-400 hover:text-red-400 transition">
-                  <VscClose className="w-3.5 h-3.5" />
+              <div key={file} className="file-chip">
+                <VscFile className="w-3 h-3" />
+                <span className="truncate max-w-[120px]">{file}</span>
+                <button onClick={() => onRemoveFile(file)}>
+                  <VscClose className="w-3 h-3" />
                 </button>
               </div>
             ))}
@@ -156,27 +170,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
 
         <div className="input-wrapper">
-          {/* Animated colorful border */}
-          <div className="animated-border"></div>
-          
           <button
             onClick={onAttachClick}
-            className="attach-button button z-index-10"
+            className="attach-button button"
             title="Attach Files"
           >
-            <VscAttachment className="w-6 h-6" />
+            <VscAttachment className="w-4 h-4" />
           </button>
-          <div className="flex flex-col flex-1 relative z-index-10">
+          <div className="flex flex-col flex-1">
             <select 
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
-              className="text-xs bg-gray-800/80 border border-cyan-500/30 rounded-lg mb-2 px-3 py-1.5 text-cyan-300 focus:outline-none focus:border-cyan-400 w-fit backdrop-blur-sm transition-all"
+              className="model-selector mb-1.5 w-fit"
             >
-              <option value="auto">Auto Select</option>
-              <option value="flash-lite">Flash Lite (Fast)</option>
-              <option value="flash">Flash (Standard)</option>
-              <option value="reasoning">Gemini Pro 2.5 (Advanced)</option>
-              <option value="preview">Gemini 3.0 Preview (Experimental)</option>
+              <option value="auto">Auto</option>
+              <option value="flash-lite">Flash Lite</option>
+              <option value="flash">Flash</option>
+              <option value="reasoning">Deep Reasoning</option>
+              <option value="intelligent">Cursor-like</option>
+              <option value="preview">Preview</option>
             </select>
             <textarea
               ref={textAreaRef}
@@ -191,7 +203,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               placeholder="Ask Platypus..."
               className="textarea"
               rows={1}
-              style={{ minHeight: '44px' }}
               autoFocus
               onFocus={() => setAutoGrow(true)}
             />
@@ -199,14 +210,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <button
             onClick={handleSubmit}
             disabled={isLoading || !input.trim()}
-            className="send-button button z-index-10"
+            className="send-button button"
           >
-            <VscSend className="w-6 h-6" />
+            <VscSend className="w-4 h-4" />
           </button>
         </div>
         <div className="status-bar">
           <span className="status-text">{statusText}</span>
-          <span className="version-text">AI: Platypus Agent vNext</span>
         </div>
       </div>
     </div>

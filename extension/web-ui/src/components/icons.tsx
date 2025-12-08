@@ -109,3 +109,27 @@ export const VscPackage: React.FC<IconProps> = (props) => (
 export const VscSync: React.FC<IconProps> = (props) => (
     <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M2.35 8.65a6 6 0 0 1 10.9-4.15l.75-.75V6.5H11.25l.9-.9a4.5 4.5 0 0 0-8.19 3.14l-.71.71-.9-.9zm11.3-1.3a6 6 0 0 1-10.9 4.15l-.75.75V9.5H4.75l-.9.9a4.5 4.5 0 0 0 8.19-3.14l.71-.71.9.9z"/></svg>
 );
+
+export const VscSearch: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M10.5 9h-.79l-.28-.27A6.471 6.471 0 0 0 11 5.5 6.5 6.5 0 1 0 4.5 11a6.47 6.47 0 0 0 3.23-.86l.27.28v.79l5 4.99L14.49 14.5l-4.99-5zm-6 0C3.67 9 3 8.33 3 7.5S3.67 6 4.5 6 6 6.67 6 7.5 5.33 9 4.5 9z"/></svg>
+);
+
+export const VscSymbolClass: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M14 2.5h-3.5L8 0 5.5 2.5H2v11h12v-11zm-1 10H3v-9h1.5L6.5 5l1.5-1.5L10 5l1.5-1.5L13 5h1.5v7z"/><path d="M6 7h1v3H6V7zm2 0h1v3H8V7zm2 0h1v3h-1V7z"/></svg>
+);
+
+export const VscSymbolMethod: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M3 1.5h6.5L12 4v3.5H3V1.5zM4 2.5v5h7V4.5H8.5V2.5H4zm4.5 7H12v-1h-1v-1h-1v1h-1v1h.5v.5H8v1h.5v.5h-1v1h1v-1h.5v-.5H12v-1h-1v-1h-1.5v-.5zM3 8.5h3.5v5H3v-5zm1 1v3h1.5v-3H4z"/></svg>
+);
+
+export const VscComment: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M14.5 2h-13l-.5.5v9l.5.5h4v2.5l.854.354L9.5 12h5l.5-.5v-9l-.5-.5zm-.5 9h-5l-.5.5-2 2V11.5l-.5-.5H2V3h12v8z"/></svg>
+);
+
+export const VscHistory: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M13.507 12.324a7 7 0 0 0 .065-8.56A7 7 0 0 0 2 4.393V2.5l-.5-.5h-1l-.5.5v4l.5.5h4l.5-.5v-1l-.5-.5H3.221a5.5 5.5 0 1 1-.65 7.248l-.87.487A6.5 6.5 0 0 0 13.507 12.324zM7.5 4.5v4h.5l2.5 1.5.5-.866L8.5 7.87V4.5h-1z"/></svg>
+);
+
+export const VscCode: React.FC<IconProps> = (props) => (
+    <svg viewBox="0 0 16 16" fill="currentColor" {...props}><path d="M10.09 14.5L16.09 8.5L10.09 2.5L9.09 3.5L13.59 8L9.09 12.5L10.09 14.5ZM5.91 14.5L6.91 13.5L2.41 8L6.91 3.5L5.91 2.5L-0.09 8.5L5.91 14.5Z"/></svg>
+);

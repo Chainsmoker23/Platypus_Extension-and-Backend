@@ -99,8 +99,15 @@ export async function generateEmbeddings(
     for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
         const batch = texts.slice(i, i + MAX_BATCH_SIZE);
         
+        // Notify start of batch processing
+        onProgress?.(i, texts.length);
+        
         // Process batch with parallel requests (but limit concurrency)
-        const batchPromises = batch.map(async (text, idx) => {
+        const batchResults: number[][] = [];
+        
+        for (let idx = 0; idx < batch.length; idx++) {
+            const text = batch[idx];
+            
             // Add small delay to avoid rate limiting
             await delay(50 * (idx % 5));
             
@@ -109,7 +116,12 @@ export async function generateEmbeddings(
             const maxAttempts = 3;
             while (attempts < maxAttempts) {
                 try {
-                    return await generateEmbedding(text);
+                    const embedding = await generateEmbedding(text);
+                    batchResults.push(embedding);
+                    
+                    // Update progress for each completed item
+                    onProgress?.(i + idx + 1, texts.length);
+                    break;
                 } catch (error: any) {
                     attempts++;
                     if (attempts >= maxAttempts || !isRateLimitError(error)) {
@@ -122,13 +134,14 @@ export async function generateEmbeddings(
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
-            throw new Error('Max retries exceeded for batch embedding');
-        });
+            
+            // Throw error if max attempts exceeded
+            if (attempts >= maxAttempts) {
+                throw new Error('Max retries exceeded for batch embedding');
+            }
+        }
 
-        const batchResults = await Promise.all(batchPromises);
         embeddings.push(...batchResults);
-
-        onProgress?.(Math.min(i + MAX_BATCH_SIZE, texts.length), texts.length);
         
         // Rate limit between batches
         if (i + MAX_BATCH_SIZE < texts.length) {

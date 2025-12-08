@@ -89,6 +89,9 @@ export async function callBackend(
                     const msg = JSON.parse(line);
                     if (msg.type === 'progress') {
                         if (onProgress) onProgress(msg.message);
+                    } else if (msg.type === 'progress-detailed') {
+                        // Handle enhanced progress updates
+                        if (onProgress) onProgress(msg.data.message);
                     } else if (msg.type === 'result') {
                         finalResult = msg.data;
                     } else if (msg.type === 'error') {

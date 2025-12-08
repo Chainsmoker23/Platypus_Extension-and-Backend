@@ -35,6 +35,16 @@
     },
     "commands": [
       {
+        "command": "platypus.newChat",
+        "title": "New Chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "platypus.toggleHistory",
+        "title": "Toggle Chat History",
+        "icon": "$(history)"
+      },
+      {
         "command": "platypus.undoLastChange",
         "title": "Platypus AI: Undo Last Change",
         "icon": "$(discard)"
@@ -44,7 +54,21 @@
         "title": "Platypus AI: Show Change History",
         "icon": "$(history)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "platypus.toggleHistory",
+          "when": "view == platypusAIView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "platypus.newChat",
+          "when": "view == platypusAIView",
+          "group": "navigation@2"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

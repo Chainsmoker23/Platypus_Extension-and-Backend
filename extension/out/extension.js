@@ -39,8 +39,18 @@ const vscode = __importStar(require("vscode"));
 const PlatypusViewProvider_1 = require("./PlatypusViewProvider");
 const changeHistory_1 = require("./utils/changeHistory");
 function activate(context) {
-    const provider = new PlatypusViewProvider_1.PlatypusViewProvider(vscode.Uri.file(context.extensionPath));
+    const provider = new PlatypusViewProvider_1.PlatypusViewProvider(vscode.Uri.file(context.extensionPath), context);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('platypusAIView', provider));
+    // Register New Chat command
+    const newChatCommand = vscode.commands.registerCommand('platypus.newChat', () => {
+        // Send new chat command to the webview
+        provider['postMessage']('trigger-new-chat', {});
+    });
+    // Register Toggle History command
+    const toggleHistoryCommand = vscode.commands.registerCommand('platypus.toggleHistory', () => {
+        // Send toggle history command to the webview
+        provider['postMessage']('trigger-toggle-history', {});
+    });
     // Auto-index workspace when opened
     if (vscode.workspace.workspaceFolders?.length) {
         // Small delay to ensure extension is fully loaded
@@ -69,7 +79,7 @@ function activate(context) {
             canPickMany: false
         });
     });
-    context.subscriptions.push(undoCommand, historyCommand);
+    context.subscriptions.push(undoCommand, historyCommand, newChatCommand, toggleHistoryCommand);
 }
 function deactivate() { }
 //# sourceMappingURL=extension.js.map
